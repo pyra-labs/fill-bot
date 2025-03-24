@@ -1,0 +1,46 @@
+{
+  "name": "fill-bot",
+  "version": "0.1.0",
+  "description": "Bot for fulfilling orders on the Quartz protocol",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "dev": "NODE_ENV=development tsx src/index.ts",
+    "lint": "yarn biome lint --write",
+    "build": "yarn install && yarn lint && tsc -p tsconfig.json",
+    "start": "yarn build && node dist/index.js",
+    "docker": "docker build --platform linux/amd64 -t fill-bot .",
+    "docker:run": "docker run --platform linux/amd64 --env-file ./.env fill-bot"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/quartz-labs/fill-bot.git"
+  },
+  "author": "Quartz",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/quartz-labs/fill-bot/issues"
+  },
+  "homepage": "https://github.com/quartz-labs/fill-bot#readme",
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "3.696.0",
+    "@quartz-labs/logger": "^1.1.1",
+    "@quartz-labs/sdk": "0.11.1",
+    "@solana/spl-token": "0.3.11",
+    "@solana/web3.js": "1.95.8",
+    "@types/node": "22.10.0",
+    "ts-node": "10.9.2",
+    "tsx": "4.19.2",
+    "typescript": "5.7.2",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^1.9.4",
+    "@types/dotenv": "^8.2.3",
+    "@types/express": "^5.0.0"
+  },
+  "resolutions": {
+    "rpc-websockets": "9.0.2",
+    "@solana/web3.js": "1.95.8"
+  }
+}
