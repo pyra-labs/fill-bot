@@ -1,5 +1,5 @@
 import { AppLogger } from "@quartz-labs/logger";
-import { buildTransaction, QuartzClient, retryWithBackoff } from "@quartz-labs/sdk";
+import { bs58, buildTransaction, QuartzClient, retryWithBackoff } from "@quartz-labs/sdk";
 import { Connection, Keypair, LAMPORTS_PER_SOL, type PublicKey, type VersionedTransaction, type MessageCompiledInstruction, type VersionedTransactionResponse } from "@solana/web3.js";
 import config from "./config/config.js";
 import { GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
@@ -25,7 +25,8 @@ export class FillBot extends AppLogger {
     private async initWallet() {
         if (!config.USE_AWS) {
             if (!config.WALLET_KEYPAIR) throw new Error("Wallet keypair is not set");
-            return Keypair.fromSecretKey(config.WALLET_KEYPAIR);
+            const bytes = bs58.decode(config.WALLET_KEYPAIR);
+            return Keypair.fromSecretKey(bytes);
         }
 
         if (!config.AWS_REGION || !config.AWS_SECRET_NAME) throw new Error("AWS credentials are not set");
@@ -43,10 +44,10 @@ export class FillBot extends AppLogger {
             const secretString = response.SecretString;
             if (!secretString) throw new Error("Secret string is not set");
 
-            const secret = JSON.parse(secretString);
-            const secretArray = new Uint8Array(JSON.parse(secret.liquidatorSecret));
-
-            return Keypair.fromSecretKey(secretArray);
+            const secret = JSON.parse(secretString).fillBotCredentials;
+            if (!secret) throw new Error("fillBotCredentials not set");
+;
+            return Keypair.fromSecretKey(bs58.decode(secret));
         } catch (error) {
             throw new Error(`Failed to get secret key from AWS: ${error}`);
         }
