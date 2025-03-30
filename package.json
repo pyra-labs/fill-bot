@@ -25,7 +25,7 @@
   "dependencies": {
     "@aws-sdk/client-secrets-manager": "3.696.0",
     "@quartz-labs/logger": "^1.1.1",
-    "@quartz-labs/sdk": "0.12.8",
+    "@quartz-labs/sdk": "0.12.9",
     "@solana/spl-token": "0.3.11",
     "@solana/web3.js": "1.95.8",
     "@types/node": "22.10.0",
