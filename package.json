@@ -23,7 +23,6 @@
   },
   "homepage": "https://github.com/quartz-labs/fill-bot#readme",
   "dependencies": {
-    "@aws-sdk/client-secrets-manager": "3.696.0",
     "@quartz-labs/logger": "^1.1.1",
     "@quartz-labs/sdk": "0.12.9",
     "@solana/spl-token": "0.3.11",

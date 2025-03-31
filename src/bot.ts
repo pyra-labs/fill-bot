@@ -1,15 +1,13 @@
 import { AppLogger } from "@quartz-labs/logger";
-import { bs58, buildTransaction, QuartzClient, retryWithBackoff } from "@quartz-labs/sdk";
-import { Connection, Keypair, LAMPORTS_PER_SOL, type PublicKey, type VersionedTransaction, type MessageCompiledInstruction, type VersionedTransactionResponse } from "@solana/web3.js";
+import { buildTransaction, QuartzClient, retryWithBackoff } from "@quartz-labs/sdk";
+import { Connection, type Keypair, LAMPORTS_PER_SOL, type PublicKey, type VersionedTransaction, type MessageCompiledInstruction, type VersionedTransactionResponse } from "@solana/web3.js";
 import config from "./config/config.js";
-import { GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
-import { SecretsManagerClient } from "@aws-sdk/client-secrets-manager";
 import { MIN_LAMPORTS_BALANCE, TIMELOCK_DURATION_MS } from "./config/constants.js";
 
 export class FillBot extends AppLogger {
     private connection: Connection;
     private quartzClientPromise: Promise<QuartzClient>;
-    private walletPromise: Promise<Keypair>;
+    private wallet: Keypair;
 
     constructor() {
         super({
@@ -19,38 +17,7 @@ export class FillBot extends AppLogger {
 
         this.connection = new Connection(config.RPC_URL);
         this.quartzClientPromise = QuartzClient.fetchClient(this.connection);
-        this.walletPromise = this.initWallet();
-    }
-
-    private async initWallet() {
-        if (!config.USE_AWS) {
-            if (!config.WALLET_KEYPAIR) throw new Error("Wallet keypair is not set");
-            const bytes = bs58.decode(config.WALLET_KEYPAIR);
-            return Keypair.fromSecretKey(bytes);
-        }
-
-        if (!config.AWS_REGION || !config.AWS_SECRET_NAME) throw new Error("AWS credentials are not set");
-
-        const client = new SecretsManagerClient({ region: config.AWS_REGION });
-
-        try {
-            const response = await client.send(
-                new GetSecretValueCommand({
-                    SecretId: config.AWS_SECRET_NAME,
-                    VersionStage: "AWSCURRENT",
-                })
-            );
-
-            const secretString = response.SecretString;
-            if (!secretString) throw new Error("Secret string is not set");
-
-            const secret = JSON.parse(secretString).fillBotCredentials;
-            if (!secret) throw new Error("fillBotCredentials not set");
-;
-            return Keypair.fromSecretKey(bs58.decode(secret));
-        } catch (error) {
-            throw new Error(`Failed to get secret key from AWS: ${error}`);
-        }
+        this.wallet = config.FILLER_KEYPAIR;
     }
 
     public async shutdown() {
@@ -61,12 +28,10 @@ export class FillBot extends AppLogger {
     }
 
     public async start() {
-        const wallet = await this.walletPromise;
-
-        const balance = await this.connection.getBalance(wallet.publicKey);
+        const balance = await this.connection.getBalance(this.wallet.publicKey);
 
         setInterval(() => {
-            this.logger.info(`Heartbeat | Bot address: ${wallet.publicKey.toBase58()}`);
+            this.logger.info(`Heartbeat | Bot address: ${this.wallet.publicKey.toBase58()}`);
         }, 1000 * 60 * 60 * 24);
 
         await this.listenForOrder(
@@ -80,7 +45,7 @@ export class FillBot extends AppLogger {
         );
 
         this.logger.info("Fill Bot Initialized");
-        this.logger.info(`Wallet Address: ${wallet.publicKey.toBase58()}`);
+        this.logger.info(`Wallet Address: ${this.wallet.publicKey.toBase58()}`);
         this.logger.info(`Balance: ${balance / LAMPORTS_PER_SOL} SOL\n`);
     }
 
@@ -118,7 +83,6 @@ export class FillBot extends AppLogger {
         order: PublicKey
     ) {
         const quartzClient = await this.quartzClientPromise;
-        const wallet = await this.walletPromise;
 
         try {
             const user = await quartzClient.getQuartzAccount(owner);
@@ -128,7 +92,7 @@ export class FillBot extends AppLogger {
                 signers
             } = await user.makeFulfilWithdrawIx(order);
 
-            const transaction = await buildTransaction(this.connection, ixs, wallet.publicKey, lookupTables);
+            const transaction = await buildTransaction(this.connection, ixs, this.wallet.publicKey, lookupTables);
             transaction.sign(signers);
             
             this.scheduleFill(transaction);
@@ -143,7 +107,6 @@ export class FillBot extends AppLogger {
         order: PublicKey
     ) {
         const quartzClient = await this.quartzClientPromise;
-        const wallet = await this.walletPromise;
 
         try {
             const user = await quartzClient.getQuartzAccount(owner);
@@ -153,7 +116,7 @@ export class FillBot extends AppLogger {
                 signers
             } = await user.makeFulfilSpendLimitsIx(order);
 
-            const transaction = await buildTransaction(this.connection, ixs, wallet.publicKey, lookupTables);
+            const transaction = await buildTransaction(this.connection, ixs, this.wallet.publicKey, lookupTables);
             transaction.sign(signers);
             
             this.scheduleFill(transaction);
@@ -199,12 +162,11 @@ export class FillBot extends AppLogger {
     }
 
     private async checkRemainingBalance(): Promise<void> {
-        const wallet = await this.walletPromise;
-        const remainingLamports = await this.connection.getBalance(wallet.publicKey);
+        const remainingLamports = await this.connection.getBalance(this.wallet.publicKey);
         if (remainingLamports < MIN_LAMPORTS_BALANCE) {
             this.sendEmail(
                 "FILL_BOT balance is low", 
-                `Fill bot balance is ${remainingLamports}, please add more SOL to ${wallet.publicKey.toBase58()}`
+                `Fill bot balance is ${remainingLamports}, please add more SOL to ${this.wallet.publicKey.toBase58()}`
             );
         }
     }
