@@ -1,8 +1,10 @@
 import { AppLogger } from "@quartz-labs/logger";
-import { buildTransaction, QuartzClient, retryWithBackoff } from "@quartz-labs/sdk";
-import { Connection, type Keypair, LAMPORTS_PER_SOL, type PublicKey, type VersionedTransaction, type MessageCompiledInstruction, type VersionedTransactionResponse } from "@solana/web3.js";
+import { buildTransaction, MARKET_INDEX_SOL, type MarketIndex, QuartzClient, retryWithBackoff, TOKENS } from "@quartz-labs/sdk";
+import { Connection, type Keypair, LAMPORTS_PER_SOL, PublicKey, type MessageCompiledInstruction, type VersionedTransactionResponse, SendTransactionError, type TransactionInstruction } from "@solana/web3.js";
 import config from "./config/config.js";
-import { MIN_LAMPORTS_BALANCE, TIMELOCK_DURATION_MS } from "./config/constants.js";
+import { MIN_LAMPORTS_BALANCE } from "./config/constants.js";
+import type { AddressLookupTableAccount } from "@solana/web3.js";
+import { filterOrdersForMissed, hasAta } from "./utilts/helpers.js";
 
 export class FillBot extends AppLogger {
     private connection: Connection;
@@ -20,14 +22,14 @@ export class FillBot extends AppLogger {
         this.wallet = config.FILLER_KEYPAIR;
     }
 
-    public async shutdown() {
+    public async shutdown(): Promise<void> {
         await this.sendEmail(
             'URGENT: Graceful shutdown initiated',
             'Received shutdown signal. This can happen during a new deployment, or if a fatal error occured. Please check the deployment status is this was not manually triggered.'
         );
     }
 
-    public async start() {
+    public async start(): Promise<void> {
         const balance = await this.connection.getBalance(this.wallet.publicKey);
 
         setInterval(() => {
@@ -43,34 +45,60 @@ export class FillBot extends AppLogger {
             "InitiateSpendLimit",
             this.scheduleSpendLimit
         );
-
+        
         this.logger.info("Fill Bot Initialized");
         this.logger.info(`Wallet Address: ${this.wallet.publicKey.toBase58()}`);
-        this.logger.info(`Balance: ${balance / LAMPORTS_PER_SOL} SOL\n`);
+        this.logger.info(`Balance: ${balance / LAMPORTS_PER_SOL} SOL`);
+        
+        this.checkOpenOrders(false);
+        setInterval(this.checkOpenOrders, 1000 * 60);
     }
 
-    private async listenForOrder(
+    private checkOpenOrders = async (onlyMissedOrders = true): Promise<void> => {
+        const quartzClient = await this.quartzClientPromise;
+        const currentSlot = await this.connection.getSlot();
+        
+        const withdrawOrders = onlyMissedOrders ? filterOrdersForMissed(
+            await quartzClient.getOpenWithdrawOrders(),
+            currentSlot
+        ) : await quartzClient.getOpenWithdrawOrders();
+
+        const spendLimitsOrders = onlyMissedOrders ? filterOrdersForMissed(
+            await quartzClient.getOpenSpendLimitsOrders(),
+            currentSlot
+        ) : await quartzClient.getOpenSpendLimitsOrders();
+
+        const orderCount = Object.keys(withdrawOrders).length + Object.keys(spendLimitsOrders).length;
+        
+        this.logger.info(`[${new Date().toISOString()}] Checking for ${onlyMissedOrders ? "missed" : "open"} orders... Found ${orderCount}`);
+        if (orderCount <= 0) return;
+
+        for (const [pubkey, _] of Object.entries(withdrawOrders)) {
+            this.scheduleWithdraw(new PublicKey(pubkey));
+        }
+
+        for (const [pubkey, _] of Object.entries(spendLimitsOrders)) {
+            this.scheduleSpendLimit(new PublicKey(pubkey));
+        }
+    }
+
+    private listenForOrder = async (
         instructionName: string,
-        scheduleFill: (owner: PublicKey, order: PublicKey) => Promise<void>
-    ) {
+        scheduleOrderFill: (order: PublicKey) => Promise<void>
+    ): Promise<void> => {
         const quartzClient = await this.quartzClientPromise;
 
-        const OWNER_INDEX = 1;
         const ORDER_INDEX = 2;
 
         quartzClient.listenForInstruction(
             instructionName,
             async (_tx: VersionedTransactionResponse, ix: MessageCompiledInstruction, accountKeys: PublicKey[]) => {
                 try {
-                    const ownerIndex = ix.accountKeyIndexes?.[OWNER_INDEX];
-                    if (ownerIndex === undefined || accountKeys[ownerIndex] === undefined) throw new Error("Owner index not found");
-                    const owner = accountKeys[ownerIndex];
-
                     const orderIndex = ix.accountKeyIndexes?.[ORDER_INDEX];
                     if (orderIndex === undefined || accountKeys[orderIndex] === undefined) throw new Error("Order index not found");
                     const order = accountKeys[orderIndex];
 
-                    scheduleFill(owner, order);
+                    scheduleOrderFill(order);
                 } catch (error) {
                     this.logger.error(`Error processing order instruction: ${error}`);
                 }
@@ -78,64 +106,101 @@ export class FillBot extends AppLogger {
         )
     }
 
-    private async scheduleWithdraw(
-        owner: PublicKey,
-        order: PublicKey
-    ) {
-        const quartzClient = await this.quartzClientPromise;
-
+    private scheduleWithdraw = async (
+        orderPubkey: PublicKey
+    ): Promise<void> => {
         try {
-            const user = await quartzClient.getQuartzAccount(owner);
-            const {
-                ixs,
-                lookupTables,
-                signers
-            } = await user.makeFulfilWithdrawIx(order);
+            const quartzClient = await this.quartzClientPromise;
+            this.logger.info(`Scheduling withdraw fill for order ${orderPubkey.toBase58()}`);
 
-            const transaction = await buildTransaction(this.connection, ixs, this.wallet.publicKey, lookupTables);
-            transaction.sign(signers);
+            const order = await quartzClient.parseOpenWithdrawOrder(orderPubkey);
+
+            await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
+
+            const marketIndex = order.driftMarketIndex.toNumber() as MarketIndex;
+            const doesAtaExist = await hasAta(
+                this.connection, 
+                order.timeLock.owner, 
+                TOKENS[marketIndex].mint
+            );
+            if (marketIndex !== MARKET_INDEX_SOL && !doesAtaExist) {
+                this.logger.info(`No ATA found for withdraw order, skipping... {account: ${orderPubkey.toBase58()}, owner: ${order.timeLock.owner.toBase58()}, marketIndex: ${marketIndex}}`);
+                return;
+            }
             
-            this.scheduleFill(transaction);
+            const user = await quartzClient.getQuartzAccount(order.timeLock.owner);
+            const ixData = await user.makeFulfilWithdrawIx(orderPubkey, this.wallet.publicKey);
+            const signature = await this.buildSendAndConfirm(
+                ixData.ixs,
+                ixData.lookupTables,
+                [this.wallet, ...ixData.signers]
+            );
+
+            this.logger.info(`Withdraw fill for order ${orderPubkey.toBase58()} confirmed: ${signature}`);
         } catch (error) {
             this.logger.error(`Error building transaction: ${error}`);
             return;
         }
     }
 
-    private async scheduleSpendLimit(
-        owner: PublicKey,
-        order: PublicKey
-    ) {
-        const quartzClient = await this.quartzClientPromise;
-
+    private scheduleSpendLimit = async (
+        orderPubkey: PublicKey
+    ): Promise<void> => {
         try {
-            const user = await quartzClient.getQuartzAccount(owner);
-            const {
-                ixs,
-                lookupTables,
-                signers
-            } = await user.makeFulfilSpendLimitsIx(order);
+            const quartzClient = await this.quartzClientPromise;
+            this.logger.info(`Scheduling spend limit fill for order ${orderPubkey.toBase58()}`);
 
-            const transaction = await buildTransaction(this.connection, ixs, this.wallet.publicKey, lookupTables);
-            transaction.sign(signers);
-            
-            this.scheduleFill(transaction);
+            const order = await quartzClient.parseOpenSpendLimitsOrder(orderPubkey);
+            await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
+
+            const user = await quartzClient.getQuartzAccount(order.timeLock.owner);
+            const ixData = await user.makeFulfilSpendLimitsIx(orderPubkey, this.wallet.publicKey);
+            const signature = await this.buildSendAndConfirm(
+                ixData.ixs,
+                ixData.lookupTables,
+                [this.wallet, ...ixData.signers]
+            );
+
+            this.logger.info(`Spend limit fill for order ${orderPubkey.toBase58()} confirmed: ${signature}`);
         } catch (error) {
             this.logger.error(`Error building transaction: ${error}`);
             return;
         }
     }
 
-    private async scheduleFill(
-        transaction: VersionedTransaction
-    ) {
-        await new Promise(resolve => setTimeout(resolve, TIMELOCK_DURATION_MS));
-        
+    private waitForRelease = async (
+        releaseSlot: number
+    ): Promise<void> => {
         try {
-            const signature = await retryWithBackoff(
+            const currentSlot = await this.connection.getSlot();
+            if (currentSlot < releaseSlot) {
+                const msToRelease = (releaseSlot - currentSlot) * 400;
+                await new Promise(resolve => setTimeout(resolve, msToRelease));
+            }
+        } catch (error) {
+            this.logger.error(`Error waiting for release: ${error}`);
+            throw error;
+        }
+    }
+
+    private buildSendAndConfirm = async (
+        instructions: TransactionInstruction[],
+        lookupTables: AddressLookupTableAccount[],
+        signers: Keypair[]
+    ): Promise<string> => {
+        try {
+            const transaction = await buildTransaction(
+                this.connection,
+                instructions,
+                this.wallet.publicKey,
+                lookupTables
+            );  
+            transaction.sign(signers);
+
+            return await retryWithBackoff(
                 async () => {
                     const signature = await retryWithBackoff(
-                        async () => this.connection.sendTransaction(transaction),
+                        async () => await this.connection.sendTransaction(transaction),
                         3
                     );
 
@@ -152,16 +217,22 @@ export class FillBot extends AppLogger {
                     )
 
                     return signature;
-                }
+                },
+                0
             );
-
-            this.logger.info(`Filled order: ${signature}`);
         } catch (error) {
+            if (error instanceof SendTransactionError) {
+                const logs = await error.getLogs(this.connection)
+                    .catch(() => [error]);
+
+                this.logger.error(`Error sending transaction: ${logs.join("\n")}`);
+            }
             this.logger.error(`Error sending transaction: ${error}`);
+            throw error;
         }
     }
 
-    private async checkRemainingBalance(): Promise<void> {
+    private checkRemainingBalance = async (): Promise<void> => {
         const remainingLamports = await this.connection.getBalance(this.wallet.publicKey);
         if (remainingLamports < MIN_LAMPORTS_BALANCE) {
             this.sendEmail(

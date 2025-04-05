@@ -8,6 +8,7 @@ lerna-debug.log*
 .pnpm-debug.log*
 
 .yalc/
+yalc.lock
 
 build/
 
