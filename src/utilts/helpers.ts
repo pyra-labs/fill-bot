@@ -3,15 +3,17 @@ import { getAssociatedTokenAddress } from "@solana/spl-token";
 import type { Connection, PublicKey } from "@solana/web3.js";
 
 export const filterOrdersForMissed = (
-    orders: Record<string, TimeLocked>, 
+    orders: {
+        publicKey: PublicKey,
+        account: TimeLocked
+    }[], 
     currentSlot: number
-): Record<string, TimeLocked> => {
+): {
+    publicKey: PublicKey,
+    account: TimeLocked
+}[] => {
     const oneMinuteAgo = currentSlot - (60 * 2.5);
-    return Object.fromEntries(
-        Object.entries(orders).filter(([_, order]) => (
-            order.timeLock.releaseSlot.toNumber() < oneMinuteAgo
-        ))
-    );
+    return orders.filter((order) => order.account.timeLock.releaseSlot.toNumber() < oneMinuteAgo);
 }
 
 export const hasAta = async (

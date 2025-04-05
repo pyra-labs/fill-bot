@@ -1,6 +1,6 @@
 import { AppLogger } from "@quartz-labs/logger";
-import { buildTransaction, MARKET_INDEX_SOL, type MarketIndex, QuartzClient, retryWithBackoff, TOKENS } from "@quartz-labs/sdk";
-import { Connection, type Keypair, LAMPORTS_PER_SOL, PublicKey, type MessageCompiledInstruction, type VersionedTransactionResponse, SendTransactionError, type TransactionInstruction } from "@solana/web3.js";
+import { buildTransaction, MARKET_INDEX_SOL, type MarketIndex, QuartzClient, retryWithBackoff, type SpendLimitsOrder, TOKENS, type WithdrawOrder } from "@quartz-labs/sdk";
+import { Connection, type Keypair, LAMPORTS_PER_SOL, PublicKey, type MessageCompiledInstruction, type VersionedTransactionResponse, type TransactionInstruction, SendTransactionError } from "@solana/web3.js";
 import config from "./config/config.js";
 import { MIN_LAMPORTS_BALANCE } from "./config/constants.js";
 import type { AddressLookupTableAccount } from "@solana/web3.js";
@@ -109,14 +109,21 @@ export class FillBot extends AppLogger {
     private scheduleWithdraw = async (
         orderPubkey: PublicKey
     ): Promise<void> => {
+        const quartzClient = await this.quartzClientPromise;
+        let order: WithdrawOrder;
+
         try {
-            const quartzClient = await this.quartzClientPromise;
             this.logger.info(`Scheduling withdraw fill for order ${orderPubkey.toBase58()}`);
 
-            const order = await quartzClient.parseOpenWithdrawOrder(orderPubkey);
+            order = await quartzClient.parseOpenWithdrawOrder(orderPubkey);
 
             await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
+        } catch (error) {
+            this.logger.error(`Error waiting for release: ${error}`);
+            return;
+        }
 
+        try {
             const marketIndex = order.driftMarketIndex.toNumber() as MarketIndex;
             const doesAtaExist = await hasAta(
                 this.connection, 
@@ -138,7 +145,14 @@ export class FillBot extends AppLogger {
 
             this.logger.info(`Withdraw fill for order ${orderPubkey.toBase58()} confirmed: ${signature}`);
         } catch (error) {
-            this.logger.error(`Error building transaction: ${error}`);
+            if (error instanceof SendTransactionError) {
+                const logs = await error.getLogs(this.connection)
+                    .catch(() => [error]);
+
+                this.logger.error(`Error sending transaction: ${logs.join("\n")}`);
+                return;
+            }
+            this.logger.error(`Error sending transaction: ${error}`);
             return;
         }
     }
@@ -146,13 +160,20 @@ export class FillBot extends AppLogger {
     private scheduleSpendLimit = async (
         orderPubkey: PublicKey
     ): Promise<void> => {
+        const quartzClient = await this.quartzClientPromise;
+        let order: SpendLimitsOrder;
+
         try {
-            const quartzClient = await this.quartzClientPromise;
             this.logger.info(`Scheduling spend limit fill for order ${orderPubkey.toBase58()}`);
 
-            const order = await quartzClient.parseOpenSpendLimitsOrder(orderPubkey);
+            order = await quartzClient.parseOpenSpendLimitsOrder(orderPubkey);
             await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
+        } catch (error) {
+            this.logger.error(`Error waiting for release: ${error}`);
+            return;
+        }
 
+        try {
             const user = await quartzClient.getQuartzAccount(order.timeLock.owner);
             const ixData = await user.makeFulfilSpendLimitsIx(orderPubkey, this.wallet.publicKey);
             const signature = await this.buildSendAndConfirm(
@@ -163,7 +184,14 @@ export class FillBot extends AppLogger {
 
             this.logger.info(`Spend limit fill for order ${orderPubkey.toBase58()} confirmed: ${signature}`);
         } catch (error) {
-            this.logger.error(`Error building transaction: ${error}`);
+            if (error instanceof SendTransactionError) {
+                const logs = await error.getLogs(this.connection)
+                    .catch(() => [error]);
+
+                this.logger.error(`Error sending transaction: ${logs.join("\n")}`);
+                return;
+            }
+            this.logger.error(`Error sending transaction: ${error}`);
             return;
         }
     }
@@ -188,48 +216,37 @@ export class FillBot extends AppLogger {
         lookupTables: AddressLookupTableAccount[],
         signers: Keypair[]
     ): Promise<string> => {
-        try {
-            const transaction = await buildTransaction(
-                this.connection,
-                instructions,
-                this.wallet.publicKey,
-                lookupTables
-            );  
-            transaction.sign(signers);
+        const transaction = await buildTransaction(
+            this.connection,
+            instructions,
+            this.wallet.publicKey,
+            lookupTables
+        );  
+        transaction.sign(signers);
 
-            return await retryWithBackoff(
-                async () => {
-                    const signature = await retryWithBackoff(
-                        async () => await this.connection.sendTransaction(transaction),
-                        3
-                    );
+        return await retryWithBackoff(
+            async () => {
+                const signature = await retryWithBackoff(
+                    async () => await this.connection.sendTransaction(transaction),
+                    3
+                );
 
-                    await retryWithBackoff(
-                        async () => {
-                            const latestBlockhash = await this.connection.getLatestBlockhash();
-                            const tx = await this.connection.confirmTransaction({ signature, ...latestBlockhash }, "confirmed");
+                await retryWithBackoff(
+                    async () => {
+                        const latestBlockhash = await this.connection.getLatestBlockhash();
+                        const tx = await this.connection.confirmTransaction({ signature, ...latestBlockhash }, "confirmed");
 
-                            await this.checkRemainingBalance();
+                        await this.checkRemainingBalance();
 
-                            if (tx.value.err) throw new Error(`Tx passed preflight but failed on-chain: ${signature}`);
-                        },
-                        1
-                    )
+                        if (tx.value.err) throw new Error(`Tx passed preflight but failed on-chain: ${signature}`);
+                    },
+                    1
+                )
 
-                    return signature;
-                },
-                0
-            );
-        } catch (error) {
-            if (error instanceof SendTransactionError) {
-                const logs = await error.getLogs(this.connection)
-                    .catch(() => [error]);
-
-                this.logger.error(`Error sending transaction: ${logs.join("\n")}`);
-            }
-            this.logger.error(`Error sending transaction: ${error}`);
-            throw error;
-        }
+                return signature;
+            },
+            0
+        );
     }
 
     private checkRemainingBalance = async (): Promise<void> => {
