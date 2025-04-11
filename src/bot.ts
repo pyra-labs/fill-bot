@@ -1,6 +1,6 @@
 import { AppLogger } from "@quartz-labs/logger";
 import { buildTransaction, MARKET_INDEX_SOL, type MarketIndex, QuartzClient, retryWithBackoff, type SpendLimitsOrder, TOKENS, type WithdrawOrder } from "@quartz-labs/sdk";
-import { Connection, type Keypair, LAMPORTS_PER_SOL, PublicKey, type MessageCompiledInstruction, type VersionedTransactionResponse, type TransactionInstruction, SendTransactionError } from "@solana/web3.js";
+import { Connection, type Keypair, LAMPORTS_PER_SOL, type PublicKey, type MessageCompiledInstruction, type VersionedTransactionResponse, type TransactionInstruction, SendTransactionError } from "@solana/web3.js";
 import config from "./config/config.js";
 import { MIN_LAMPORTS_BALANCE } from "./config/constants.js";
 import type { AddressLookupTableAccount } from "@solana/web3.js";
@@ -62,23 +62,23 @@ export class FillBot extends AppLogger {
             await quartzClient.getOpenWithdrawOrders(),
             currentSlot
         ) : await quartzClient.getOpenWithdrawOrders();
-
+        
         const spendLimitsOrders = onlyMissedOrders ? filterOrdersForMissed(
             await quartzClient.getOpenSpendLimitsOrders(),
             currentSlot
         ) : await quartzClient.getOpenSpendLimitsOrders();
-
+        
         const orderCount = Object.keys(withdrawOrders).length + Object.keys(spendLimitsOrders).length;
         
         this.logger.info(`[${new Date().toISOString()}] Checking for ${onlyMissedOrders ? "missed" : "open"} orders... Found ${orderCount}`);
         if (orderCount <= 0) return;
 
-        for (const [pubkey, _] of Object.entries(withdrawOrders)) {
-            this.scheduleWithdraw(new PublicKey(pubkey));
+        for (const [, order] of Object.entries(withdrawOrders)) {
+            this.scheduleWithdraw(order.publicKey);
         }
 
-        for (const [pubkey, _] of Object.entries(spendLimitsOrders)) {
-            this.scheduleSpendLimit(new PublicKey(pubkey));
+        for (const [, order] of Object.entries(spendLimitsOrders)) {
+            this.scheduleSpendLimit(order.publicKey);
         }
     }
 
