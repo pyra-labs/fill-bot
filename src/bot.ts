@@ -118,6 +118,12 @@ export class FillBot extends AppLogger {
             order = await quartzClient.parseOpenWithdrawOrder(orderPubkey);
 
             await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
+
+            const accountInfo = await this.connection.getAccountInfo(orderPubkey);
+            if (!accountInfo) {
+                this.logger.info(`Order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
+                return;
+            }
         } catch (error) {
             this.logger.error(`Error waiting for release: ${error}`);
             return;
@@ -168,6 +174,12 @@ export class FillBot extends AppLogger {
 
             order = await quartzClient.parseOpenSpendLimitsOrder(orderPubkey);
             await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
+
+            const accountInfo = await this.connection.getAccountInfo(orderPubkey);
+            if (!accountInfo) {
+                this.logger.info(`Order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
+                return;
+            }
         } catch (error) {
             this.logger.error(`Error waiting for release: ${error}`);
             return;
