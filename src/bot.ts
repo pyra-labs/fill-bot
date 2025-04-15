@@ -158,7 +158,7 @@ export class FillBot extends AppLogger {
                 this.logger.error(`Error sending transaction: ${logs.join("\n")}`);
                 return;
             }
-            this.logger.error(`Error sending transaction: ${error}`);
+            this.logger.error(`Error sending transaction: ${JSON.stringify(error)}`);
             return;
         }
     }
@@ -203,7 +203,7 @@ export class FillBot extends AppLogger {
                 this.logger.error(`Error sending transaction: ${logs.join("\n")}`);
                 return;
             }
-            this.logger.error(`Error sending transaction: ${error}`);
+            this.logger.error(`Error sending transaction: ${JSON.stringify(error)}`);
             return;
         }
     }
