@@ -115,7 +115,7 @@ export class FillBot extends AppLogger {
         try {
             this.logger.info(`Scheduling withdraw fill for order ${orderPubkey.toBase58()}`);
 
-            order = await quartzClient.parseOpenWithdrawOrder(orderPubkey);
+            order = await quartzClient.parseOpenWithdrawOrder(orderPubkey, 10);
 
             await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
 
@@ -172,7 +172,7 @@ export class FillBot extends AppLogger {
         try {
             this.logger.info(`Scheduling spend limit fill for order ${orderPubkey.toBase58()}`);
 
-            order = await quartzClient.parseOpenSpendLimitsOrder(orderPubkey);
+            order = await quartzClient.parseOpenSpendLimitsOrder(orderPubkey, 10);
             await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
 
             const accountInfo = await this.connection.getAccountInfo(orderPubkey);
