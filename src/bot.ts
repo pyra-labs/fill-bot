@@ -125,7 +125,7 @@ export class FillBot extends AppLogger {
                 return;
             }
         } catch (error) {
-            this.logger.error(`Error waiting for release: ${error}`);
+            this.logger.error(`Error waiting for release for order ${orderPubkey.toBase58()}: ${error}`);
             return;
         }
 
@@ -155,10 +155,10 @@ export class FillBot extends AppLogger {
                 const logs = await error.getLogs(this.connection)
                     .catch(() => [error]);
 
-                this.logger.error(`Error sending transaction: ${logs.join("\n")}`);
+                this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${logs.join("\n")}`);
                 return;
             }
-            this.logger.error(`Error sending transaction: ${JSON.stringify(error)}`);
+            this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${JSON.stringify(error)}`);
             return;
         }
     }
@@ -181,7 +181,7 @@ export class FillBot extends AppLogger {
                 return;
             }
         } catch (error) {
-            this.logger.error(`Error waiting for release: ${error}`);
+            this.logger.error(`Error waiting for release for order ${orderPubkey.toBase58()}: ${error}`);
             return;
         }
 
@@ -200,10 +200,10 @@ export class FillBot extends AppLogger {
                 const logs = await error.getLogs(this.connection)
                     .catch(() => [error]);
 
-                this.logger.error(`Error sending transaction: ${logs.join("\n")}`);
+                this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${logs.join("\n")}`);
                 return;
             }
-            this.logger.error(`Error sending transaction: ${JSON.stringify(error)}`);
+            this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${JSON.stringify(error)}`);
             return;
         }
     }
