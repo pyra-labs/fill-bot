@@ -104,7 +104,7 @@ export class FillBot extends AppLogger {
 
             this.logger.info(`Deposit filled for user ${user.pubkey.toBase58()} (market index ${marketIndex}) confirmed: ${signature}`);
         } catch (error) {
-            this.logger.error(`Error fulfilling deposit: ${error} - ${JSON.stringify(error)}`);
+            this.logger.error(`Error fulfilling deposit for user ${user.pubkey.toBase58()} (market index ${marketIndex}): ${error} - ${JSON.stringify(error)}`);
         }
     }
 
