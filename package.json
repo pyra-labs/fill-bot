@@ -24,7 +24,7 @@
   "homepage": "https://github.com/quartz-labs/fill-bot#readme",
   "dependencies": {
     "@quartz-labs/logger": "^1.1.1",
-    "@quartz-labs/sdk": "0.16.2",
+    "@quartz-labs/sdk": "0.16.4",
     "@solana/spl-token": "0.3.11",
     "@solana/web3.js": "1.95.8",
     "@types/node": "22.10.0",
