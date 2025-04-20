@@ -1,5 +1,5 @@
 import { AppLogger } from "@quartz-labs/logger";
-import { buildTransaction, MARKET_INDEX_SOL, type MarketIndex, QuartzClient, retryWithBackoff, type SpendLimitsOrder, TOKENS, type WithdrawOrder } from "@quartz-labs/sdk";
+import { type BN, buildTransaction, MARKET_INDEX_SOL, MarketIndex, QuartzClient, type QuartzUser, retryWithBackoff, type SpendLimitsOrder, TOKENS, type WithdrawOrder, ZERO } from "@quartz-labs/sdk";
 import { Connection, type Keypair, LAMPORTS_PER_SOL, type PublicKey, type MessageCompiledInstruction, type VersionedTransactionResponse, type TransactionInstruction, SendTransactionError } from "@solana/web3.js";
 import config from "./config/config.js";
 import { MIN_LAMPORTS_BALANCE } from "./config/constants.js";
@@ -51,34 +51,92 @@ export class FillBot extends AppLogger {
         this.logger.info(`Balance: ${balance / LAMPORTS_PER_SOL} SOL`);
         
         this.checkOpenOrders(false);
-        setInterval(this.checkOpenOrders, 1000 * 60);
+        setInterval(this.checkOpenOrders, 1000 * 60); // 1 minute
+
+        this.processDepositAddresses();
+        setInterval(this.processDepositAddresses, 1000 * 60 * 10); // 10 minutes
+    }
+
+    private processDepositAddresses = async (): Promise<void> => {
+        try {
+            const quartzClient = await this.quartzClientPromise;
+            const owners = await retryWithBackoff(
+                async () => await quartzClient.getAllQuartzAccountOwnerPubkeys()
+            );
+            const users = await retryWithBackoff(
+                async () => {
+                    const users = await quartzClient.getMultipleQuartzAccounts(owners);
+                    return users.filter(user => user !== null); // Skip users without a Drift account
+                }
+            );
+
+            this.logger.info(`Processing deposit addresses for ${users.length} users`);
+
+            for (const user of users) {
+                const depositAddressBalances = await user.getAllDepositAddressBalances();
+                for (const marketIndex of MarketIndex) {
+                    const balance: BN = depositAddressBalances[marketIndex];
+                    if (balance.lte(ZERO)) continue;
+
+                    this.fulfilDeposit(user, marketIndex);
+                }
+            }
+        } catch (error) {
+            this.logger.error(`Error processing deposit addresses: ${error} - ${JSON.stringify(error)}`);
+        }
+    }
+
+    private fulfilDeposit = async (
+        user: QuartzUser, 
+        marketIndex: MarketIndex
+    ): Promise<void> => {
+        try {
+            const {
+                ixs,
+                lookupTables,
+                signers
+            } = await user.makeFulfilDepositIx(marketIndex, this.wallet.publicKey);
+            const signature = await this.buildSendAndConfirm(
+                ixs,
+                lookupTables,
+                [this.wallet, ...signers]
+            );
+
+            this.logger.info(`Deposit filled for user ${user.pubkey.toBase58()} (market index ${marketIndex}) confirmed: ${signature}`);
+        } catch (error) {
+            this.logger.error(`Error fulfilling deposit: ${error} - ${JSON.stringify(error)}`);
+        }
     }
 
     private checkOpenOrders = async (onlyMissedOrders = true): Promise<void> => {
-        const quartzClient = await this.quartzClientPromise;
-        const currentSlot = await this.connection.getSlot();
-        
-        const withdrawOrders = onlyMissedOrders ? filterOrdersForMissed(
-            await quartzClient.getOpenWithdrawOrders(),
-            currentSlot
-        ) : await quartzClient.getOpenWithdrawOrders();
-        
-        const spendLimitsOrders = onlyMissedOrders ? filterOrdersForMissed(
-            await quartzClient.getOpenSpendLimitsOrders(),
-            currentSlot
-        ) : await quartzClient.getOpenSpendLimitsOrders();
-        
-        const orderCount = Object.keys(withdrawOrders).length + Object.keys(spendLimitsOrders).length;
-        
-        this.logger.info(`[${new Date().toISOString()}] Checking for ${onlyMissedOrders ? "missed" : "open"} orders... Found ${orderCount}`);
-        if (orderCount <= 0) return;
+        try {
+            const quartzClient = await this.quartzClientPromise;
+            const currentSlot = await this.connection.getSlot();
+            
+            const withdrawOrders = onlyMissedOrders ? filterOrdersForMissed(
+                await quartzClient.getOpenWithdrawOrders(),
+                currentSlot
+            ) : await quartzClient.getOpenWithdrawOrders();
+            
+            const spendLimitsOrders = onlyMissedOrders ? filterOrdersForMissed(
+                await quartzClient.getOpenSpendLimitsOrders(),
+                currentSlot
+            ) : await quartzClient.getOpenSpendLimitsOrders();
+            
+            const orderCount = Object.keys(withdrawOrders).length + Object.keys(spendLimitsOrders).length;
+            
+            this.logger.info(`[${new Date().toISOString()}] Checking for ${onlyMissedOrders ? "missed" : "open"} orders... Found ${orderCount}`);
+            if (orderCount <= 0) return;
 
-        for (const [, order] of Object.entries(withdrawOrders)) {
-            this.scheduleWithdraw(order.publicKey);
-        }
+            for (const [, order] of Object.entries(withdrawOrders)) {
+                this.scheduleWithdraw(order.publicKey);
+            }
 
-        for (const [, order] of Object.entries(spendLimitsOrders)) {
-            this.scheduleSpendLimit(order.publicKey);
+            for (const [, order] of Object.entries(spendLimitsOrders)) {
+                this.scheduleSpendLimit(order.publicKey);
+            }
+        } catch (error) {
+            this.logger.error(`Error checking open orders: ${error} - ${JSON.stringify(error)}`);
         }
     }
 
@@ -213,8 +271,8 @@ export class FillBot extends AppLogger {
     ): Promise<void> => {
         try {
             const currentSlot = await this.connection.getSlot();
-            if (currentSlot < releaseSlot) {
-                const msToRelease = (releaseSlot - currentSlot) * 400;
+            if (currentSlot <= releaseSlot) {
+                const msToRelease = (releaseSlot - currentSlot + 1) * 400; // Add one to land after the release slot
                 await new Promise(resolve => setTimeout(resolve, msToRelease));
             }
         } catch (error) {
