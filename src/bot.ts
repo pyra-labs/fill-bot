@@ -176,12 +176,6 @@ export class FillBot extends AppLogger {
             order = await quartzClient.parseOpenWithdrawOrder(orderPubkey, 10);
 
             await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
-
-            const accountInfo = await this.connection.getAccountInfo(orderPubkey);
-            if (!accountInfo) {
-                this.logger.info(`Order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
-                return;
-            }
         } catch (error) {
             this.logger.error(`Error waiting for release for order ${orderPubkey.toBase58()}: ${error}`);
             return;
@@ -196,6 +190,12 @@ export class FillBot extends AppLogger {
             );
             if (marketIndex !== MARKET_INDEX_SOL && !doesAtaExist) {
                 this.logger.info(`No ATA found for withdraw order, skipping... {account: ${orderPubkey.toBase58()}, owner: ${order.timeLock.owner.toBase58()}, marketIndex: ${marketIndex}}`);
+                return;
+            }
+
+            const accountInfo = await this.connection.getAccountInfo(orderPubkey);
+            if (!accountInfo) {
+                this.logger.info(`Order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
                 return;
             }
             
@@ -232,18 +232,18 @@ export class FillBot extends AppLogger {
 
             order = await quartzClient.parseOpenSpendLimitsOrder(orderPubkey, 10);
             await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
-
-            const accountInfo = await this.connection.getAccountInfo(orderPubkey);
-            if (!accountInfo) {
-                this.logger.info(`Order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
-                return;
-            }
         } catch (error) {
             this.logger.error(`Error waiting for release for order ${orderPubkey.toBase58()}: ${error}`);
             return;
         }
 
         try {
+            const accountInfo = await this.connection.getAccountInfo(orderPubkey);
+            if (!accountInfo) {
+                this.logger.info(`Order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
+                return;
+            }
+            
             const user = await quartzClient.getQuartzAccount(order.timeLock.owner);
             const ixData = await user.makeFulfilSpendLimitsIx(orderPubkey, this.wallet.publicKey);
             const signature = await this.buildSendAndConfirm(
