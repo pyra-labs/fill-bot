@@ -95,7 +95,7 @@ export class FillBot extends AppLogger {
                 ixs,
                 lookupTables,
                 signers
-            } = await user.makeFulfilDepositIx(marketIndex, this.wallet.publicKey);
+            } = await user.makeFulfilDepositIxs(marketIndex, this.wallet.publicKey);
             const signature = await this.buildSendAndConfirm(
                 ixs,
                 lookupTables,
@@ -200,7 +200,7 @@ export class FillBot extends AppLogger {
             }
             
             const user = await quartzClient.getQuartzAccount(order.timeLock.owner);
-            const ixData = await user.makeFulfilWithdrawIx(orderPubkey, this.wallet.publicKey);
+            const ixData = await user.makeFulfilWithdrawIxs(orderPubkey, this.wallet.publicKey);
             const signature = await this.buildSendAndConfirm(
                 ixData.ixs,
                 ixData.lookupTables,
@@ -243,9 +243,9 @@ export class FillBot extends AppLogger {
                 this.logger.info(`Order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
                 return;
             }
-            
+
             const user = await quartzClient.getQuartzAccount(order.timeLock.owner);
-            const ixData = await user.makeFulfilSpendLimitsIx(orderPubkey, this.wallet.publicKey);
+            const ixData = await user.makeFulfilSpendLimitsIxs(orderPubkey, this.wallet.publicKey);
             const signature = await this.buildSendAndConfirm(
                 ixData.ixs,
                 ixData.lookupTables,
