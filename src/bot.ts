@@ -191,7 +191,7 @@ export class FillBot extends AppLogger {
             const marketIndex = order.driftMarketIndex.toNumber() as MarketIndex;
             const doesAtaExist = await hasAta(
                 this.connection, 
-                order.timeLock.owner, 
+                order.destination, 
                 TOKENS[marketIndex].mint
             );
             if (marketIndex !== MARKET_INDEX_SOL && !doesAtaExist) {
