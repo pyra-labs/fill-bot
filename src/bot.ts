@@ -73,10 +73,16 @@ export class FillBot extends AppLogger {
             this.logger.info(`Processing deposit addresses for ${users.length} users`);
 
             for (const user of users) {
+                if (await this.checkRequiresUpgrade(this.connection, user)) { 
+                    continue; // TODO: Remove once all users are upgraded
+                }
+
                 const depositAddressBalances = await user.getAllDepositAddressBalances();
                 for (const marketIndex of MarketIndex) {
                     const balance: BN = depositAddressBalances[marketIndex];
-                    if (balance.lte(ZERO)) continue;
+                    if (balance.lte(ZERO)) {
+                        continue;
+                    }
 
                     this.fulfilDeposit(user, marketIndex);
                 }
@@ -328,5 +334,13 @@ export class FillBot extends AppLogger {
                 `Fill bot balance is ${remainingLamports}, please add more SOL to ${this.wallet.publicKey.toBase58()}`
             );
         }
+    }
+
+    private async checkRequiresUpgrade(connection: Connection, user: QuartzUser): Promise<boolean> {
+        const vaultPdaAccount = await connection.getAccountInfo(user.vaultPubkey);
+        if (vaultPdaAccount === null) return true;
+    
+        const OLD_VAULT_SIZE = 41;
+        return (vaultPdaAccount.data.length <= OLD_VAULT_SIZE);
     }
 }
