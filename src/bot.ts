@@ -192,12 +192,6 @@ export class FillBot extends AppLogger {
                 this.logger.info(`No ATA found for withdraw order, skipping... {account: ${orderPubkey.toBase58()}, owner: ${order.timeLock.owner.toBase58()}, marketIndex: ${marketIndex}}`);
                 return;
             }
-
-            const accountInfo = await this.connection.getAccountInfo(orderPubkey);
-            if (!accountInfo) {
-                this.logger.info(`Order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
-                return;
-            }
             
             const user = await quartzClient.getQuartzAccount(order.timeLock.owner);
             const ixData = await user.makeFulfilWithdrawIxs(orderPubkey, this.wallet.publicKey);
@@ -207,7 +201,9 @@ export class FillBot extends AppLogger {
                 [this.wallet, ...ixData.signers]
             );
 
-            this.logger.info(`Withdraw fill for order ${orderPubkey.toBase58()} confirmed: ${signature}`);
+            if (signature) {
+                this.logger.info(`Withdraw fill for order ${orderPubkey.toBase58()} confirmed: ${signature}`);
+            }
         } catch (error) {
             if (error instanceof SendTransactionError) {
                 const logs = await error.getLogs(this.connection)
@@ -238,12 +234,6 @@ export class FillBot extends AppLogger {
         }
 
         try {
-            const accountInfo = await this.connection.getAccountInfo(orderPubkey);
-            if (!accountInfo) {
-                this.logger.info(`Order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
-                return;
-            }
-
             const user = await quartzClient.getQuartzAccount(order.timeLock.owner);
             const ixData = await user.makeFulfilSpendLimitsIxs(orderPubkey, this.wallet.publicKey);
             const signature = await this.buildSendAndConfirm(
@@ -252,7 +242,9 @@ export class FillBot extends AppLogger {
                 [this.wallet, ...ixData.signers]
             );
 
-            this.logger.info(`Spend limit fill for order ${orderPubkey.toBase58()} confirmed: ${signature}`);
+            if (signature) {
+                this.logger.info(`Spend limit fill for order ${orderPubkey.toBase58()} confirmed: ${signature}`);
+            }
         } catch (error) {
             if (error instanceof SendTransactionError) {
                 const logs = await error.getLogs(this.connection)
@@ -284,18 +276,27 @@ export class FillBot extends AppLogger {
     private buildSendAndConfirm = async (
         instructions: TransactionInstruction[],
         lookupTables: AddressLookupTableAccount[],
-        signers: Keypair[]
-    ): Promise<string> => {
-        const transaction = await buildTransaction(
-            this.connection,
-            instructions,
-            this.wallet.publicKey,
-            lookupTables
-        );  
-        transaction.sign(signers);
-
+        signers: Keypair[],
+        orderAccount?: PublicKey
+    ): Promise<string | null> => {
         return await retryWithBackoff(
             async () => {
+                if (orderAccount) {
+                    const accountInfo = await this.connection.getAccountInfo(orderAccount);
+                    if (!accountInfo) {
+                        this.logger.info(`Order ${orderAccount.toBase58()} no longer exists on chain, skipping...`);
+                        return null;
+                    }
+                }
+
+                const transaction = await buildTransaction(
+                    this.connection,
+                    instructions,
+                    this.wallet.publicKey,
+                    lookupTables
+                );  
+                transaction.sign(signers);
+
                 const signature = await retryWithBackoff(
                     async () => await this.connection.sendTransaction(transaction),
                     3
@@ -315,7 +316,7 @@ export class FillBot extends AppLogger {
 
                 return signature;
             },
-            0
+            3
         );
     }
 
