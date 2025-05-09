@@ -70,14 +70,17 @@ export class FillBot extends AppLogger {
                 async () => {
                     const users = await quartzClient.getMultipleQuartzAccounts(owners);
                     return users
-                        .filter(user => user !== null) // Skip users without a Drift account
-                        .filter(user => !this.checkRequiresUpgrade(user)) // Skip users that need to upgrade
+                        .filter(user => user !== null); // Skip users without a Drift account
                 }
             );
 
             this.logger.info(`Processing deposit addresses for ${users.length} users`);
 
             for (const user of users) {
+                if (await this.checkRequiresUpgrade(user)) {
+                    continue;
+                }
+
                 const depositAddressBalances = await user.getAllDepositAddressBalances();
                 for (const marketIndex of MarketIndex) {
                     const balance: BN = depositAddressBalances[marketIndex];
