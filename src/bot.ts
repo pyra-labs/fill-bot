@@ -69,7 +69,9 @@ export class FillBot extends AppLogger {
             const users = await retryWithBackoff(
                 async () => {
                     const users = await quartzClient.getMultipleQuartzAccounts(owners);
-                    return users.filter(user => user !== null); // Skip users without a Drift account
+                    return users
+                        .filter(user => user !== null) // Skip users without a Drift account
+                        .filter(user => !this.checkRequiresUpgrade(user)) // Skip users that need to upgrade
                 }
             );
 
@@ -331,5 +333,13 @@ export class FillBot extends AppLogger {
                 `Fill bot balance is ${remainingLamports}, please add more SOL to ${this.wallet.publicKey.toBase58()}`
             );
         }
+    }
+
+    private async checkRequiresUpgrade(user: QuartzUser): Promise<boolean> {
+        const vaultPdaAccount = await this.connection.getAccountInfo(user.vaultPubkey);
+        if (vaultPdaAccount === null) return true;
+    
+        const OLD_VAULT_SIZE = 41;
+        return (vaultPdaAccount.data.length <= OLD_VAULT_SIZE);
     }
 }
