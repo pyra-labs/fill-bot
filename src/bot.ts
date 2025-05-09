@@ -1,13 +1,14 @@
 import { AppLogger } from "@quartz-labs/logger";
 import { type BN, buildTransaction, MARKET_INDEX_SOL, MarketIndex, QuartzClient, type QuartzUser, retryWithBackoff, type SpendLimitsOrder, TOKENS, type WithdrawOrder, ZERO } from "@quartz-labs/sdk";
-import { Connection, type Keypair, LAMPORTS_PER_SOL, type PublicKey, type MessageCompiledInstruction, type VersionedTransactionResponse, type TransactionInstruction, SendTransactionError } from "@solana/web3.js";
 import config from "./config/config.js";
 import { MIN_LAMPORTS_BALANCE } from "./config/constants.js";
-import type { AddressLookupTableAccount } from "@solana/web3.js";
+import { LAMPORTS_PER_SOL, SendTransactionError } from "@solana/web3.js";
+import type { PublicKey, TransactionInstruction, AddressLookupTableAccount, Keypair, MessageCompiledInstruction, VersionedTransactionResponse } from "@solana/web3.js";
 import { filterOrdersForMissed, hasAta } from "./utilts/helpers.js";
+import AdvancedConnection from "@quartz-labs/connection";
 
 export class FillBot extends AppLogger {
-    private connection: Connection;
+    private connection: AdvancedConnection;
     private quartzClientPromise: Promise<QuartzClient>;
     private wallet: Keypair;
 
@@ -17,8 +18,10 @@ export class FillBot extends AppLogger {
             dailyErrorCacheTimeMs: 1000 * 60 * 15 // 15 minutes
         })
 
-        this.connection = new Connection(config.RPC_URL);
-        this.quartzClientPromise = QuartzClient.fetchClient(this.connection);
+        this.connection = new AdvancedConnection(config.RPC_URLS);
+        this.quartzClientPromise = QuartzClient.fetchClient({
+            connection: this.connection
+        });
         this.wallet = config.FILLER_KEYPAIR;
     }
 
@@ -336,7 +339,7 @@ export class FillBot extends AppLogger {
         }
     }
 
-    private async checkRequiresUpgrade(connection: Connection, user: QuartzUser): Promise<boolean> {
+    private async checkRequiresUpgrade(connection: AdvancedConnection, user: QuartzUser): Promise<boolean> {
         const vaultPdaAccount = await connection.getAccountInfo(user.vaultPubkey);
         if (vaultPdaAccount === null) return true;
     
