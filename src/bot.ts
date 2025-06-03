@@ -1,10 +1,10 @@
 import { AppLogger } from "@quartz-labs/logger";
-import { type BN, buildTransaction, MARKET_INDEX_SOL, MarketIndex, QuartzClient, type QuartzUser, retryWithBackoff, type SpendLimitsOrder, TOKENS, type WithdrawOrder, ZERO } from "@quartz-labs/sdk";
+import { type BN, MARKET_INDEX_SOL, MarketIndex, QuartzClient, type QuartzUser, retryWithBackoff, type SpendLimitsOrder, TOKENS, type WithdrawOrder, ZERO } from "@quartz-labs/sdk";
 import { type Keypair, LAMPORTS_PER_SOL, type PublicKey, type MessageCompiledInstruction, type VersionedTransactionResponse, type TransactionInstruction, SendTransactionError } from "@solana/web3.js";
 import config from "./config/config.js";
 import { MIN_LAMPORTS_BALANCE } from "./config/constants.js";
 import type { AddressLookupTableAccount } from "@solana/web3.js";
-import { filterOrdersForMissed, hasAta } from "./utilts/helpers.js";
+import { buildTransactionMinCU, filterOrdersForMissed, hasAta } from "./utilts/helpers.js";
 import AdvancedConnection from "@quartz-labs/connection";
 
 export class FillBot extends AppLogger {
@@ -57,7 +57,7 @@ export class FillBot extends AppLogger {
         setInterval(this.checkOpenOrders, 1000 * 60); // 1 minute
 
         this.processDepositAddresses();
-        setInterval(this.processDepositAddresses, 1000 * 60 * 10); // 10 minutes
+        setInterval(this.processDepositAddresses, 1000 * 60 * 3); // 3 minutes
     }
 
     private processDepositAddresses = async (): Promise<void> => {
@@ -297,7 +297,7 @@ export class FillBot extends AppLogger {
                     }
                 }
 
-                const transaction = await buildTransaction(
+                const transaction = await buildTransactionMinCU(
                     this.connection,
                     instructions,
                     this.wallet.publicKey,
