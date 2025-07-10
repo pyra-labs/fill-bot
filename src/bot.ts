@@ -217,6 +217,14 @@ export class FillBot extends AppLogger {
                 const logs = await error.getLogs(this.connection)
                     .catch(() => [error]);
 
+                const logsString = logs.join("\n");
+                const INSUFFICIENT_COLLATERAL_ERROR = "Program log: Error Insufficient collateral thrown at programs/drift/src/state/user.rs:596\nProgram log: User attempting to withdraw where total_collateral";
+
+                if (logsString.includes(INSUFFICIENT_COLLATERAL_ERROR)) {
+                    this.logger.info(`Insufficient collateral error for order ${orderPubkey.toBase58()}, skipping...`);
+                    return;
+                }
+
                 this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${logs.join("\n")}`);
                 return;
             }
