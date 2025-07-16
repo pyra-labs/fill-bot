@@ -84,7 +84,9 @@ export class FillBot extends AppLogger {
                 const depositAddressBalances = await user.getAllDepositAddressBalances();
                 for (const marketIndex of MarketIndex) {
                     const balance: BN = depositAddressBalances[marketIndex];
-                    if (balance.lte(ZERO)) continue;
+                    if (balance.lte(ZERO)) {
+                        continue;
+                    }
 
                     this.fulfilDeposit(user, marketIndex);
                 }
