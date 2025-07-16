@@ -77,7 +77,7 @@ export class FillBot extends AppLogger {
             this.logger.info(`Processing deposit addresses for ${users.length} users`);
 
             for (const user of users) {
-                if (await this.checkRequiresUpgrade(this.connection, user)) { 
+                if (await this.checkRequiresUpgrade(user)) { 
                     continue; // TODO: Remove once all users are upgraded
                 }
 
