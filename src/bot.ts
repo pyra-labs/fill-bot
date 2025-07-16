@@ -1,10 +1,10 @@
 import { AppLogger } from "@quartz-labs/logger";
-import { type BN, buildTransaction, MARKET_INDEX_SOL, MarketIndex, QuartzClient, type QuartzUser, retryWithBackoff, type SpendLimitsOrder, TOKENS, type WithdrawOrder, ZERO } from "@quartz-labs/sdk";
+import { type BN, MARKET_INDEX_SOL, MarketIndex, QuartzClient, type QuartzUser, retryWithBackoff, type SpendLimitsOrder, TOKENS, type WithdrawOrder, ZERO } from "@quartz-labs/sdk";
 import { type Keypair, LAMPORTS_PER_SOL, type PublicKey, type MessageCompiledInstruction, type VersionedTransactionResponse, type TransactionInstruction, SendTransactionError } from "@solana/web3.js";
 import config from "./config/config.js";
 import { MIN_LAMPORTS_BALANCE } from "./config/constants.js";
 import type { AddressLookupTableAccount } from "@solana/web3.js";
-import { filterOrdersForMissed, hasAta } from "./utilts/helpers.js";
+import { buildTransactionMinCU, filterOrdersForMissed, hasAta } from "./utilts/helpers.js";
 import AdvancedConnection from "@quartz-labs/connection";
 
 export class FillBot extends AppLogger {
@@ -57,7 +57,7 @@ export class FillBot extends AppLogger {
         setInterval(this.checkOpenOrders, 1000 * 60); // 1 minute
 
         this.processDepositAddresses();
-        setInterval(this.processDepositAddresses, 1000 * 60 * 10); // 10 minutes
+        setInterval(this.processDepositAddresses, 1000 * 60 * 3); // 3 minutes
     }
 
     private processDepositAddresses = async (): Promise<void> => {
@@ -69,7 +69,8 @@ export class FillBot extends AppLogger {
             const users = await retryWithBackoff(
                 async () => {
                     const users = await quartzClient.getMultipleQuartzAccounts(owners);
-                    return users.filter(user => user !== null); // Skip users without a Drift account
+                    return users
+                        .filter(user => user !== null); // Skip users without a Drift account
                 }
             );
 
@@ -218,6 +219,14 @@ export class FillBot extends AppLogger {
                 const logs = await error.getLogs(this.connection)
                     .catch(() => [error]);
 
+                const logsString = logs.join("\n");
+                const INSUFFICIENT_COLLATERAL_ERROR = "Program log: Error Insufficient collateral thrown at programs/drift/src/state/user.rs:596\nProgram log: User attempting to withdraw where total_collateral";
+
+                if (logsString.includes(INSUFFICIENT_COLLATERAL_ERROR)) {
+                    this.logger.info(`Insufficient collateral error for order ${orderPubkey.toBase58()}, skipping...`);
+                    return;
+                }
+
                 this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${logs.join("\n")}`);
                 return;
             }
@@ -298,7 +307,7 @@ export class FillBot extends AppLogger {
                     }
                 }
 
-                const transaction = await buildTransaction(
+                const transaction = await buildTransactionMinCU(
                     this.connection,
                     instructions,
                     this.wallet.publicKey,
@@ -339,8 +348,8 @@ export class FillBot extends AppLogger {
         }
     }
 
-    private async checkRequiresUpgrade(connection: Connection, user: QuartzUser): Promise<boolean> {
-        const vaultPdaAccount = await connection.getAccountInfo(user.vaultPubkey);
+    private async checkRequiresUpgrade(user: QuartzUser): Promise<boolean> {
+        const vaultPdaAccount = await this.connection.getAccountInfo(user.vaultPubkey);
         if (vaultPdaAccount === null) return true;
     
         const OLD_VAULT_SIZE = 41;
