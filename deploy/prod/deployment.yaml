@@ -18,7 +18,7 @@ spec:
         app: fill-bot
     spec:
       containers:
-        - image: gcr.io/festive-cirrus-452916-c1/fill-bot:latest
+        - image: LOCATION-docker.pkg.dev/PROJECT_ID/REPOSITORY/IMAGE:TAG
           name: app
           env:
             - name: GOOGLE_CLOUD_PROJECT
