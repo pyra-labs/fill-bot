@@ -1,0 +1,60 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fill-bot
+  namespace: prod
+  labels:
+    env: prod
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: fill-bot
+  template:
+    metadata:
+      name: fill-bot
+      labels:
+        env: prod
+        app: fill-bot
+    spec:
+      containers:
+        - image: gcr.io/festive-cirrus-452916-c1/fill-bot:latest
+          name: app
+          env:
+            - name: GOOGLE_CLOUD_PROJECT
+              value: festive-cirrus-452916-c1
+            - name: FILLER_KEYPAIR
+              valueFrom:
+                secretKeyRef:
+                  name: filler-keypair
+                  key: key
+            - name: RPC_URLS
+              valueFrom:
+                secretKeyRef:
+                  name: rpc-urls
+                  key: key
+            - name: EMAIL_TO
+              value: iarla@pyra.fi,diego@pyra.fi
+            - name: EMAIL_FROM
+              value: diego@pyra.fi
+            - name: EMAIL_HOST
+              value: smtp-relay.brevo.com
+            - name: EMAIL_PORT
+              value: "587"
+            - name: EMAIL_USER
+              value: 77aaea001@smtp-brevo.com
+            - name: EMAIL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: email-password
+                  key: key
+          resources:
+            requests:
+              memory: 256Mi
+              cpu: 250m
+            limits:
+              memory: 512Mi
+              cpu: 500m
+          securityContext:
+            runAsUser: 1005
+            runAsNonRoot: true
