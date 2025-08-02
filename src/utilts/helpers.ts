@@ -2,15 +2,15 @@ import { DEFAULT_COMPUTE_UNIT_LIMIT, getComputeUnitPriceIx, getTokenProgram, ret
 import { getAssociatedTokenAddress } from "@solana/spl-token";
 import { ComputeBudgetProgram, TransactionMessage, VersionedTransaction, type AddressLookupTableAccount, type Connection, type PublicKey, type TransactionInstruction } from "@solana/web3.js";
 
-export const filterOrdersForMissed = (
+export const filterOrdersForMissed = <T extends TimeLocked>(
     orders: {
         publicKey: PublicKey,
-        account: TimeLocked
+        account: T
     }[], 
     currentSlot: number
 ): {
     publicKey: PublicKey,
-    account: TimeLocked
+    account: T
 }[] => {
     const oneMinuteAgo = currentSlot - (60 * 2.5);
     return orders.filter((order) => order.account.timeLock.releaseSlot.toNumber() < oneMinuteAgo);
@@ -91,4 +91,47 @@ export async function buildTransactionMinCU(
     }).compileToV0Message(lookupTables);
     const transaction = new VersionedTransaction(messageV0);
     return transaction;
+}
+
+export async function fetchAndParse<T>(
+    url: string,
+    req?: RequestInit | undefined,
+    retries = 0
+): Promise<T> {
+    const response = await retryWithBackoff(
+        async () => fetch(url, req),
+        retries
+    );
+
+    if (!response.ok) {
+        let body: unknown;
+        try {
+            body = await response.json();
+        } catch {
+            body = null;
+        }
+        const error = {
+            status: response.status,
+            body
+        }
+        throw new Error(JSON.stringify(error) ?? `Could not fetch ${url}`);
+    }
+
+    try {
+        const body = await response.json();
+        return body as T;
+    } catch {
+        return response as T;
+    }
+}
+
+export function buildEndpointURL(baseEndpoint: string, params?: Record<string, string>) {
+    if (!params) return baseEndpoint;
+
+    const stringParams: Record<string, string> = {};
+    for (const [key, value] of Object.entries(params)) {
+        stringParams[key] = String(value);
+    }
+    const searchParams = new URLSearchParams(stringParams);
+    return `${baseEndpoint}${params ? `?${searchParams.toString()}` : ''}`;
 }
