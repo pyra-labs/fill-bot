@@ -304,10 +304,16 @@ export class FillBot extends AppLogger {
                     .catch(() => [error]);
 
                 const logsString = logs.join("\n");
-                const INSUFFICIENT_COLLATERAL_ERROR = "Program log: Error Insufficient collateral thrown at programs/drift/src/state/user.rs:596\nProgram log: User attempting to withdraw where total_collateral";
+                const INSUFFICIENT_COLLATERAL_ERROR = "\nProgram log: Error Insufficient collateral thrown at programs/drift/src/state/user.rs:596\nProgram log: User attempting to withdraw where total_collateral";
+                const DAILY_WITHDRAW_LIMIT_ERROR = "\nProgram log: AnchorError occurred. Error Code: DailyWithdrawLimit. Error Number: 6128. Error Message: DailyWithdrawLimit.\nProgram dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH";
 
                 if (logsString.includes(INSUFFICIENT_COLLATERAL_ERROR)) {
                     this.logger.info(`Insufficient collateral error for order ${orderPubkey.toBase58()}, skipping...`);
+                    return;
+                }
+
+                if (logsString.includes(DAILY_WITHDRAW_LIMIT_ERROR)) {
+                    this.logger.warn(`Daily withdraw limit error for order ${orderPubkey.toBase58()}, skipping...`);
                     return;
                 }
 
@@ -413,7 +419,7 @@ export class FillBot extends AppLogger {
 
                 const signature = await retryWithBackoff(
                     async () => await this.connection.sendTransaction(transaction),
-                    3
+                    0
                 );
 
                 await retryWithBackoff(
