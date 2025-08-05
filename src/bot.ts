@@ -1,11 +1,12 @@
 import { AppLogger } from "@quartz-labs/logger";
-import { type BN, MARKET_INDEX_SOL, MarketIndex, QuartzClient, type QuartzUser, retryWithBackoff, type SpendLimitsOrder, TOKENS, type WithdrawOrder, ZERO } from "@quartz-labs/sdk";
-import { type Keypair, LAMPORTS_PER_SOL, type PublicKey, type MessageCompiledInstruction, type VersionedTransactionResponse, type TransactionInstruction, SendTransactionError } from "@solana/web3.js";
+import { BN, MARKET_INDEX_SOL, MarketIndex, QuartzClient, type QuartzUser, retryWithBackoff, type SpendLimitsOrder, type SpendLimitsOrderAccount, TOKENS, type WithdrawOrder, type WithdrawOrderAccount, ZERO } from "@quartz-labs/sdk";
+import { type Keypair, LAMPORTS_PER_SOL, type MessageCompiledInstruction, PublicKey, type VersionedTransactionResponse, type TransactionInstruction, SendTransactionError } from "@solana/web3.js";
 import config from "./config/config.js";
 import { MIN_LAMPORTS_BALANCE } from "./config/constants.js";
 import type { AddressLookupTableAccount } from "@solana/web3.js";
-import { buildTransactionMinCU, filterOrdersForMissed, hasAta } from "./utilts/helpers.js";
+import { buildEndpointURL, buildTransactionMinCU, fetchAndParse, filterOrdersForMissed, hasAta } from "./utilts/helpers.js";
 import AdvancedConnection from "@quartz-labs/connection";
+import type { SpendLimitsOrderResponse, WithdrawOrderResponse } from "./types/Orders.interface.js";
 
 export class FillBot extends AppLogger {
     private connection: AdvancedConnection;
@@ -54,7 +55,7 @@ export class FillBot extends AppLogger {
         this.logger.info(`Balance: ${balance / LAMPORTS_PER_SOL} SOL`);
         
         this.checkOpenOrders(false);
-        setInterval(this.checkOpenOrders, 1000 * 60); // 1 minute
+        setInterval(this.checkOpenOrders, 1000 * 60 * 3); // 3 minutes
 
         this.processDepositAddresses();
         setInterval(this.processDepositAddresses, 1000 * 60 * 3); // 3 minutes
@@ -120,39 +121,104 @@ export class FillBot extends AppLogger {
 
     private checkOpenOrders = async (onlyMissedOrders = true): Promise<void> => {
         try {
-            const quartzClient = await this.quartzClientPromise;
-            const currentSlot = await this.connection.getSlot();
-            
-            const withdrawOrders = onlyMissedOrders ? filterOrdersForMissed(
-                await quartzClient.getOpenWithdrawOrders(),
-                currentSlot
-            ) : await quartzClient.getOpenWithdrawOrders();
-            
-            const spendLimitsOrders = onlyMissedOrders ? filterOrdersForMissed(
-                await quartzClient.getOpenSpendLimitsOrders(),
-                currentSlot
-            ) : await quartzClient.getOpenSpendLimitsOrders();
-            
-            const orderCount = Object.keys(withdrawOrders).length + Object.keys(spendLimitsOrders).length;
-            
-            this.logger.info(`[${new Date().toISOString()}] Checking for ${onlyMissedOrders ? "missed" : "open"} orders... Found ${orderCount}`);
-            if (orderCount <= 0) return;
+            await this.checkOpenOrdersAPI(onlyMissedOrders);
+            return;
+        } catch (error) {
+            this.logger.warn(`Error checking open orders via API, falling back to RPC: ${error} - ${JSON.stringify(error)}`);
+        }
 
-            for (const [, order] of Object.entries(withdrawOrders)) {
-                this.scheduleWithdraw(order.publicKey);
-            }
-
-            for (const [, order] of Object.entries(spendLimitsOrders)) {
-                this.scheduleSpendLimit(order.publicKey);
-            }
+        try {
+            await this.checkOpenOrdersRPC(onlyMissedOrders);
         } catch (error) {
             this.logger.error(`Error checking open orders: ${error} - ${JSON.stringify(error)}`);
         }
     }
 
-    private listenForOrder = async (
-        instructionName: string,
-        scheduleOrderFill: (order: PublicKey) => Promise<void>
+    private checkOpenOrdersAPI = async (onlyMissedOrders = true): Promise<void> => {
+        const orders = await fetchAndParse<{ 
+            withdrawOrders: WithdrawOrderResponse[], 
+            spendLimitsOrders: SpendLimitsOrderResponse[]
+        }>(`${config.INTERNAL_API_URL}/data/all-open-orders`);
+
+        const withdrawOrders: WithdrawOrderAccount[] = orders.withdrawOrders.map(order => ({
+            publicKey: new PublicKey(order.publicKey),
+            account: {
+                timeLock: {
+                    owner: new PublicKey(order.account.time_lock.owner),
+                    isOwnerPayer: order.account.time_lock.is_owner_payer,
+                    releaseSlot: new BN(order.account.time_lock.release_slot)
+                },
+                amountBaseUnits: new BN(order.account.amount_base_units),
+                driftMarketIndex: new BN(order.account.drift_market_index),
+                reduceOnly: order.account.reduce_only,
+                destination: new PublicKey(order.account.destination)
+            }
+        }));
+
+        const spendLimitsOrders: SpendLimitsOrderAccount[] = orders.spendLimitsOrders.map(order => ({
+            publicKey: new PublicKey(order.publicKey),
+            account: {
+                timeLock: {
+                    owner: new PublicKey(order.account.time_lock.owner),
+                    isOwnerPayer: order.account.time_lock.is_owner_payer,
+                    releaseSlot: new BN(order.account.time_lock.release_slot)
+                },
+                spendLimitPerTransaction: new BN(order.account.spend_limit_per_transaction),
+                spendLimitPerTimeframe: new BN(order.account.spend_limit_per_timeframe),
+                timeframeInSeconds: new BN(order.account.timeframe_in_seconds),
+                nextTimeframeResetTimestamp: new BN(order.account.next_timeframe_reset_timestamp)
+            }
+        }));
+
+        this.scheduleOrders(withdrawOrders, spendLimitsOrders, onlyMissedOrders);
+    }
+
+    private checkOpenOrdersRPC = async (onlyMissedOrders = true): Promise<void> => {
+        const quartzClient = await this.quartzClientPromise;
+        
+        const withdrawOrders = await retryWithBackoff(
+            async () => await quartzClient.getOpenWithdrawOrders(),
+            10
+        );
+        
+        const spendLimitsOrders = await retryWithBackoff(
+            async () => await quartzClient.getOpenSpendLimitsOrders(),
+            10
+        );
+
+        this.scheduleOrders(withdrawOrders, spendLimitsOrders, onlyMissedOrders);
+    }
+
+    private scheduleOrders = async (
+        withdrawOrders: WithdrawOrderAccount[],
+        spendLimitsOrders: SpendLimitsOrderAccount[],
+        onlyMissedOrders = true
+    ): Promise<void> => {
+        const currentSlot = await this.connection.getSlot();
+        const withdrawOrdersFiltered = onlyMissedOrders 
+            ? filterOrdersForMissed(withdrawOrders, currentSlot) 
+            : withdrawOrders;
+        const spendLimitsOrdersFiltered = onlyMissedOrders 
+            ? filterOrdersForMissed(spendLimitsOrders, currentSlot) 
+            : spendLimitsOrders;
+
+        const orderCount = Object.keys(withdrawOrdersFiltered).length + Object.keys(spendLimitsOrdersFiltered).length;
+        
+        this.logger.info(`[${new Date().toISOString()}] Checking for ${onlyMissedOrders ? "missed" : "open"} orders... Found ${orderCount}`);
+        if (orderCount <= 0) return;
+
+        for (const [, order] of Object.entries(withdrawOrdersFiltered)) {
+            this.scheduleWithdraw(order.publicKey, order.account);
+        }
+
+        for (const [, order] of Object.entries(spendLimitsOrdersFiltered)) {
+            this.scheduleSpendLimit(order.publicKey, order.account);
+        }
+    }
+
+    private listenForOrder = async <T extends WithdrawOrder | SpendLimitsOrder>(
+        instructionName: "InitiateWithdraw" | "InitiateSpendLimit",
+        scheduleOrderFill: (orderPubkey: PublicKey, order: T) => Promise<void>
     ): Promise<void> => {
         const quartzClient = await this.quartzClientPromise;
 
@@ -164,9 +230,16 @@ export class FillBot extends AppLogger {
                 try {
                     const orderIndex = ix.accountKeyIndexes?.[ORDER_INDEX];
                     if (orderIndex === undefined || accountKeys[orderIndex] === undefined) throw new Error("Order index not found");
-                    const order = accountKeys[orderIndex];
+                    const orderPubkey = accountKeys[orderIndex];
 
-                    scheduleOrderFill(order);
+                    let order: T;
+                    if (instructionName === "InitiateWithdraw") {
+                        order = await quartzClient.parseOpenWithdrawOrder(orderPubkey, 10) as T;
+                    } else {
+                        order = await quartzClient.parseOpenSpendLimitsOrder(orderPubkey, 10) as T;
+                    }
+
+                    scheduleOrderFill(orderPubkey, order);
                 } catch (error) {
                     this.logger.error(`Error processing order instruction: ${error}`);
                 }
@@ -175,20 +248,31 @@ export class FillBot extends AppLogger {
     }
 
     private scheduleWithdraw = async (
-        orderPubkey: PublicKey
+        orderPubkey: PublicKey,
+        order: WithdrawOrder
     ): Promise<void> => {
         const quartzClient = await this.quartzClientPromise;
-        let order: WithdrawOrder;
 
         try {
             this.logger.info(`Scheduling withdraw fill for order ${orderPubkey.toBase58()}`);
-
-            order = await quartzClient.parseOpenWithdrawOrder(orderPubkey, 10);
-
             await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
         } catch (error) {
             this.logger.error(`Error waiting for release for order ${orderPubkey.toBase58()}: ${error}`);
             return;
+        }
+
+        try {
+            const endpoint = buildEndpointURL(`${config.INTERNAL_API_URL}/data/order/withdraw`, {
+                publicKey: orderPubkey.toBase58()
+            });
+            const orderResponse = await fetchAndParse<{order: WithdrawOrderResponse | null}>(endpoint);
+
+            if (orderResponse.order === null) {
+                this.logger.info(`Withdraw order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
+                return;
+            }
+        } catch (error) {
+            this.logger.warn(`Error checking if withdraw order ${orderPubkey.toBase58()} exists, assuming it does...: ${error} - ${JSON.stringify(error)}`);
         }
 
         try {
@@ -220,10 +304,16 @@ export class FillBot extends AppLogger {
                     .catch(() => [error]);
 
                 const logsString = logs.join("\n");
-                const INSUFFICIENT_COLLATERAL_ERROR = "Program log: Error Insufficient collateral thrown at programs/drift/src/state/user.rs:596\nProgram log: User attempting to withdraw where total_collateral";
+                const INSUFFICIENT_COLLATERAL_ERROR = "\nProgram log: Error Insufficient collateral thrown at programs/drift/src/state/user.rs:596\nProgram log: User attempting to withdraw where total_collateral";
+                const DAILY_WITHDRAW_LIMIT_ERROR = "\nProgram log: AnchorError occurred. Error Code: DailyWithdrawLimit. Error Number: 6128. Error Message: DailyWithdrawLimit.\nProgram dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH";
 
                 if (logsString.includes(INSUFFICIENT_COLLATERAL_ERROR)) {
                     this.logger.info(`Insufficient collateral error for order ${orderPubkey.toBase58()}, skipping...`);
+                    return;
+                }
+
+                if (logsString.includes(DAILY_WITHDRAW_LIMIT_ERROR)) {
+                    this.logger.warn(`Daily withdraw limit error for order ${orderPubkey.toBase58()}, skipping...`);
                     return;
                 }
 
@@ -236,19 +326,31 @@ export class FillBot extends AppLogger {
     }
 
     private scheduleSpendLimit = async (
-        orderPubkey: PublicKey
+        orderPubkey: PublicKey,
+        order: SpendLimitsOrder
     ): Promise<void> => {
         const quartzClient = await this.quartzClientPromise;
-        let order: SpendLimitsOrder;
 
         try {
             this.logger.info(`Scheduling spend limit fill for order ${orderPubkey.toBase58()}`);
-
-            order = await quartzClient.parseOpenSpendLimitsOrder(orderPubkey, 10);
             await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
         } catch (error) {
             this.logger.error(`Error waiting for release for order ${orderPubkey.toBase58()}: ${error}`);
             return;
+        }
+
+        try {
+            const endpoint = buildEndpointURL(`${config.INTERNAL_API_URL}/data/order/spend-limits`, {
+                publicKey: orderPubkey.toBase58()
+            });
+            const orderResponse = await fetchAndParse<{order: SpendLimitsOrderResponse | null}>(endpoint);
+
+            if (orderResponse.order === null) {
+                this.logger.info(`Spend limit order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
+                return;
+            }
+        } catch (error) {
+            this.logger.warn(`Error checking if spend limit order ${orderPubkey.toBase58()} exists, assuming it does...: ${error} - ${JSON.stringify(error)}`);
         }
 
         try {
@@ -317,7 +419,7 @@ export class FillBot extends AppLogger {
 
                 const signature = await retryWithBackoff(
                     async () => await this.connection.sendTransaction(transaction),
-                    3
+                    0
                 );
 
                 await retryWithBackoff(

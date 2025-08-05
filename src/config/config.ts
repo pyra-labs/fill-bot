@@ -24,6 +24,7 @@ const envSchema = z.object({
                 throw new Error("Invalid RPC_URLS format: must be comma-separated URLs starting with https");
             }
         }),
+    INTERNAL_API_URL: z.string().url().transform(str => str.replace(/\/+$/, ''))
 });
 
 const config = envSchema.parse(process.env);
