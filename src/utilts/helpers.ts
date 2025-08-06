@@ -24,7 +24,8 @@ export const hasAta = async (
     const mintTokenProgram = await getTokenProgram(connection, mint);
     const ata = await getAssociatedTokenAddress(mint, owner, true, mintTokenProgram);
     const ataInfo = await retryWithBackoff(
-        () => connection.getAccountInfo(ata)
+        async () => await connection.getAccountInfo(ata),
+        10
     );
     return ataInfo !== null;
 }

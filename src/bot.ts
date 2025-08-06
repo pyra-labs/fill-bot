@@ -194,7 +194,10 @@ export class FillBot extends AppLogger {
         spendLimitsOrders: SpendLimitsOrderAccount[],
         onlyMissedOrders = true
     ): Promise<void> => {
-        const currentSlot = await this.connection.getSlot();
+        const currentSlot = await retryWithBackoff(
+            async () => await this.connection.getSlot(),
+            6
+        );
         const withdrawOrdersFiltered = onlyMissedOrders 
             ? filterOrdersForMissed(withdrawOrders, currentSlot) 
             : withdrawOrders;
@@ -382,7 +385,10 @@ export class FillBot extends AppLogger {
         releaseSlot: number
     ): Promise<void> => {
         try {
-            const currentSlot = await this.connection.getSlot();
+            const currentSlot = await retryWithBackoff(
+                async () => await this.connection.getSlot(),
+                6
+            );
             if (currentSlot <= releaseSlot) {
                 const msToRelease = (releaseSlot - currentSlot + 1) * 400; // Add one to land after the release slot
                 await new Promise(resolve => setTimeout(resolve, msToRelease));
@@ -402,7 +408,10 @@ export class FillBot extends AppLogger {
         return await retryWithBackoff(
             async () => {
                 if (orderAccount) {
-                    const accountInfo = await this.connection.getAccountInfo(orderAccount);
+                    const accountInfo = await retryWithBackoff(
+                        async () => await this.connection.getAccountInfo(orderAccount),
+                        6
+                    );
                     if (!accountInfo) {
                         this.logger.info(`Order ${orderAccount.toBase58()} no longer exists on chain, skipping...`);
                         return null;
@@ -424,7 +433,10 @@ export class FillBot extends AppLogger {
 
                 await retryWithBackoff(
                     async () => {
-                        const latestBlockhash = await this.connection.getLatestBlockhash();
+                        const latestBlockhash = await retryWithBackoff(
+                            async () => await this.connection.getLatestBlockhash(),
+                            1
+                        );
                         const tx = await this.connection.confirmTransaction({ signature, ...latestBlockhash }, "confirmed");
 
                         await this.checkRemainingBalance();
@@ -441,7 +453,10 @@ export class FillBot extends AppLogger {
     }
 
     private checkRemainingBalance = async (): Promise<void> => {
-        const remainingLamports = await this.connection.getBalance(this.wallet.publicKey);
+        const remainingLamports = await retryWithBackoff(
+            async () => await this.connection.getBalance(this.wallet.publicKey),
+            6
+        );
         if (remainingLamports < MIN_LAMPORTS_BALANCE) {
             this.sendEmail(
                 "FILL_BOT balance is low", 
@@ -451,7 +466,10 @@ export class FillBot extends AppLogger {
     }
 
     private async checkRequiresUpgrade(user: QuartzUser): Promise<boolean> {
-        const vaultPdaAccount = await this.connection.getAccountInfo(user.vaultPubkey);
+        const vaultPdaAccount = await retryWithBackoff(
+            async () => await this.connection.getAccountInfo(user.vaultPubkey),
+            6
+        );
         if (vaultPdaAccount === null) return true;
     
         const OLD_VAULT_SIZE = 41;
