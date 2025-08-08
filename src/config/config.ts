@@ -18,10 +18,18 @@ const envSchema = z.object({
         .transform((str) => {
             try {
                 const urls = str.split(',').map(url => url.trim());
-                if (!urls.every(url => url.startsWith("https"))) throw new Error();
-                return urls;
-            } catch {
-                throw new Error("Invalid RPC_URLS format: must be comma-separated URLs starting with https");
+                if (urls.length === 0) throw new Error("No URLs found");
+
+                const nonEmptyUrls = urls.filter(url => url.length > 0);
+                if (nonEmptyUrls.length === 0) throw new Error("No URLs found after filtering empty strings");
+
+                const invalidUrls = nonEmptyUrls.filter(url => !url.startsWith("https"));
+                if (invalidUrls.length > 0) {
+                    throw new Error(`Invalid URLs found: ${invalidUrls.join(',')}`);
+                }
+                return nonEmptyUrls;
+            } catch (error) {
+                throw new Error(`RPC_URLS must be comma-separated URLs starting with https - ${error}`);
             }
         }),
     INTERNAL_API_URL: z.string().url().transform(str => str.replace(/\/+$/, ''))
