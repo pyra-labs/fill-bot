@@ -115,6 +115,18 @@ export class FillBot extends AppLogger {
 
             this.logger.info(`Deposit filled for user ${user.pubkey.toBase58()} (market index ${marketIndex}) confirmed: ${signature}`);
         } catch (error) {
+            if (error instanceof SendTransactionError) {
+                const logs = await error.getLogs(this.connection)
+                    .catch(() => [error]);
+                const logsString = logs.join("\n");
+                const SPOT_POSITION_UNAVAILABLE_ERROR = "\nProgram log: AnchorError occurred. Error Code: NoSpotPositionAvailable. Error Number: 6084. Error Message: NoSpotPositionAvailable.\nProgram dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH";
+
+                if (logsString.includes(SPOT_POSITION_UNAVAILABLE_ERROR)) {
+                    this.logger.info(`Spot position unavailable error for user ${user.pubkey.toBase58()} (market index ${marketIndex}), skipping...`);
+                    return;
+                }
+            }
+
             this.logger.error(`Error fulfilling deposit for user ${user.pubkey.toBase58()} (market index ${marketIndex}): ${error} - ${JSON.stringify(error)}`);
         }
     }
