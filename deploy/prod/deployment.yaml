@@ -34,7 +34,7 @@ spec:
                   name: rpc-urls
                   key: key
             - name: INTERNAL_API_URL
-              value: http://internal.api.quartzpay.io/
+              value: https://api.pyra.fi/card/
             - name: EMAIL_TO
               value: iarla@pyra.fi,diego@pyra.fi
             - name: EMAIL_FROM
