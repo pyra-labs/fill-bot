@@ -333,9 +333,10 @@ export class FillBot extends AppLogger {
 
                 const logsString = logs.join("\n");
                 const INSUFFICIENT_COLLATERAL_ERROR = "\nProgram log: Error Insufficient collateral thrown at programs/drift/src/state/user.rs:596\nProgram log: User attempting to withdraw where total_collateral";
+                const INSUFFICIENT_BALANCE_ERROR = "\"Program dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH invoke [2]\",\n \"Program log: Instruction: Deposit\",\n \"Program log: AnchorError occurred. Error Code: InsufficientDeposit. Error Number: 6002. Error Message: Insufficient deposit.\"";
                 const DAILY_WITHDRAW_LIMIT_ERROR = "\nProgram log: AnchorError occurred. Error Code: DailyWithdrawLimit. Error Number: 6128. Error Message: DailyWithdrawLimit.\nProgram dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH";
 
-                if (logsString.includes(INSUFFICIENT_COLLATERAL_ERROR)) {
+                if (logsString.includes(INSUFFICIENT_COLLATERAL_ERROR) || logsString.includes(INSUFFICIENT_BALANCE_ERROR)) {
                     this.logger.info(`Insufficient collateral error for order ${orderPubkey.toBase58()}, skipping...`);
                     return;
                 }
