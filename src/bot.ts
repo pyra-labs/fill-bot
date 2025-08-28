@@ -263,8 +263,6 @@ export class FillBot extends AppLogger {
         orderPubkey: PublicKey,
         order: WithdrawOrder
     ): Promise<void> => {
-        const quartzClient = await this.quartzClientPromise;
-
         try {
             this.logger.info(`Scheduling withdraw fill for order ${orderPubkey.toBase58()}`);
             await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
@@ -272,6 +270,24 @@ export class FillBot extends AppLogger {
             this.logger.error(`Error waiting for release for order ${orderPubkey.toBase58()}: ${error}`);
             return;
         }
+
+        try {
+            await retryWithBackoff(
+                async () => {
+                    await this.fillWithdraw(orderPubkey, order);
+                },
+                3
+            );
+        } catch (error) {
+            this.logger.error(`Error scheduling withdraw fill for order ${orderPubkey.toBase58()}: ${error}`);
+        }
+    }
+
+    private fillWithdraw = async (
+        orderPubkey: PublicKey,
+        order: WithdrawOrder
+    ): Promise<void> => {
+        const quartzClient = await this.quartzClientPromise;
 
         try {
             const endpoint = buildEndpointURL(`${config.INTERNAL_API_URL}/data/order/withdraw`, {
@@ -329,11 +345,10 @@ export class FillBot extends AppLogger {
                     return;
                 }
 
-                this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${logs.join("\n")}`);
-                return;
+                throw new Error(logs.join("\n"));
             }
-            this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${JSON.stringify(error)}`);
-            return;
+
+            throw error;
         }
     }
 
@@ -341,8 +356,6 @@ export class FillBot extends AppLogger {
         orderPubkey: PublicKey,
         order: SpendLimitsOrder
     ): Promise<void> => {
-        const quartzClient = await this.quartzClientPromise;
-
         try {
             this.logger.info(`Scheduling spend limit fill for order ${orderPubkey.toBase58()}`);
             await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
@@ -351,6 +364,24 @@ export class FillBot extends AppLogger {
             return;
         }
 
+        try {
+            await retryWithBackoff(
+                async () => {
+                    await this.fillSpendLimit(orderPubkey, order);
+                },
+                3
+            );
+        } catch (error) {
+            this.logger.error(`Error scheduling spend limit fill for order ${orderPubkey.toBase58()}: ${error}`);
+        }
+    }
+
+    private fillSpendLimit = async (
+        orderPubkey: PublicKey,
+        order: SpendLimitsOrder
+    ): Promise<void> => {
+        const quartzClient = await this.quartzClientPromise;
+        
         try {
             const endpoint = buildEndpointURL(`${config.INTERNAL_API_URL}/data/order/spend-limits`, {
                 publicKey: orderPubkey.toBase58()
@@ -382,11 +413,9 @@ export class FillBot extends AppLogger {
                 const logs = await error.getLogs(this.connection)
                     .catch(() => [error]);
 
-                this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${logs.join("\n")}`);
-                return;
+                throw new Error(logs.join("\n"));
             }
-            this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${JSON.stringify(error)}`);
-            return;
+            throw new Error(`${orderPubkey.toBase58()}: ${JSON.stringify(error)}`);
         }
     }
 
