@@ -274,12 +274,8 @@ export class FillBot extends AppLogger {
         }
 
         try {
-            const endpoint = buildEndpointURL(`${config.INTERNAL_API_URL}/data/order/withdraw`, {
-                publicKey: orderPubkey.toBase58()
-            });
-            const orderResponse = await fetchAndParse<{order: WithdrawOrderResponse | null}>(endpoint);
-
-            if (orderResponse.order === null) {
+            const orderExists = await this.checkOrderExists(orderPubkey, "withdraw");
+            if (!orderExists) {
                 this.logger.info(`Withdraw order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
                 return;
             }
@@ -316,6 +312,7 @@ export class FillBot extends AppLogger {
                     .catch(() => [error]);
 
                 const logsString = logs.join("\n");
+                const ACCOUNT_DOES_NOT_EXIST_ERROR = `Error: Account does not exist or has no data ${orderPubkey.toBase58()}`;
                 const INSUFFICIENT_COLLATERAL_ERROR = "\nProgram log: Error Insufficient collateral thrown at programs/drift/src/state/user.rs:596\nProgram log: User attempting to withdraw where total_collateral";
                 const DAILY_WITHDRAW_LIMIT_ERROR = "\nProgram log: AnchorError occurred. Error Code: DailyWithdrawLimit. Error Number: 6128. Error Message: DailyWithdrawLimit.\nProgram dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH";
 
@@ -327,6 +324,14 @@ export class FillBot extends AppLogger {
                 if (logsString.includes(DAILY_WITHDRAW_LIMIT_ERROR)) {
                     this.logger.warn(`Daily withdraw limit error for order ${orderPubkey.toBase58()}, skipping...`);
                     return;
+                }
+
+                if (logsString.includes(ACCOUNT_DOES_NOT_EXIST_ERROR)) {
+                    const accountExists = await this.checkOrderExists(orderPubkey, "withdraw");
+                    if (!accountExists) {
+                        // Order already processed
+                        return;
+                    }
                 }
 
                 this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${logs.join("\n")}`);
@@ -352,12 +357,8 @@ export class FillBot extends AppLogger {
         }
 
         try {
-            const endpoint = buildEndpointURL(`${config.INTERNAL_API_URL}/data/order/spend-limits`, {
-                publicKey: orderPubkey.toBase58()
-            });
-            const orderResponse = await fetchAndParse<{order: SpendLimitsOrderResponse | null}>(endpoint);
-
-            if (orderResponse.order === null) {
+            const orderExists = await this.checkOrderExists(orderPubkey, "spend-limits");
+            if (!orderExists) {
                 this.logger.info(`Spend limit order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
                 return;
             }
@@ -382,6 +383,16 @@ export class FillBot extends AppLogger {
                 const logs = await error.getLogs(this.connection)
                     .catch(() => [error]);
 
+                const logsString = logs.join("\n");
+                const ACCOUNT_DOES_NOT_EXIST_ERROR = `Error: Account does not exist or has no data ${orderPubkey.toBase58()}`;
+                if (logsString.includes(ACCOUNT_DOES_NOT_EXIST_ERROR)) {
+                    const accountExists = await this.checkOrderExists(orderPubkey, "spend-limits");
+                    if (!accountExists) {
+                        // Order already processed
+                        return;
+                    }
+                }
+
                 this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${logs.join("\n")}`);
                 return;
             }
@@ -403,6 +414,18 @@ export class FillBot extends AppLogger {
             this.logger.error(`Error waiting for release: ${error}`);
             throw error;
         }
+    }
+
+    private checkOrderExists = async (
+        orderPubkey: PublicKey,
+        orderType: "withdraw" | "spend-limits"
+    ): Promise<boolean> => {
+        const endpoint = buildEndpointURL(`${config.INTERNAL_API_URL}/data/order/${orderType}`, {
+            publicKey: orderPubkey.toBase58()
+        });
+        const orderResponse = await fetchAndParse<{order: WithdrawOrderResponse | null}>(endpoint);
+
+        return orderResponse.order !== null;
     }
 
     private buildSendAndConfirm = async (
