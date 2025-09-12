@@ -290,12 +290,8 @@ export class FillBot extends AppLogger {
         const quartzClient = await this.quartzClientPromise;
 
         try {
-            const endpoint = buildEndpointURL(`${config.INTERNAL_API_URL}/data/order/withdraw`, {
-                publicKey: orderPubkey.toBase58()
-            });
-            const orderResponse = await fetchAndParse<{order: WithdrawOrderResponse | null}>(endpoint);
-
-            if (orderResponse.order === null) {
+            const accountExists = await this.checkOrderExists(orderPubkey, "withdraw");
+            if (!accountExists) {
                 this.logger.info(`Withdraw order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
                 return;
             }
@@ -335,6 +331,7 @@ export class FillBot extends AppLogger {
                 const INSUFFICIENT_COLLATERAL_ERROR = "\nProgram log: Error Insufficient collateral thrown at programs/drift/src/state/user.rs:598\nProgram log: User attempting to withdraw where total_collateral";
                 const INSUFFICIENT_BALANCE_ERROR = "\"Program dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH invoke [2]\",\n \"Program log: Instruction: Deposit\",\n \"Program log: AnchorError occurred. Error Code: InsufficientDeposit. Error Number: 6002. Error Message: Insufficient deposit.\"";
                 const DAILY_WITHDRAW_LIMIT_ERROR = "\nProgram log: AnchorError occurred. Error Code: DailyWithdrawLimit. Error Number: 6128. Error Message: DailyWithdrawLimit.\nProgram dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH";
+                const ACCOUNT_DOES_NOT_EXIST_ERROR = `Error: Account does not exist or has no data ${orderPubkey.toBase58()}`;
 
                 if (logsString.includes(INSUFFICIENT_COLLATERAL_ERROR) || logsString.includes(INSUFFICIENT_BALANCE_ERROR)) {
                     this.logger.info(`Insufficient collateral error for order ${orderPubkey.toBase58()}, skipping...`);
@@ -344,6 +341,14 @@ export class FillBot extends AppLogger {
                 if (logsString.includes(DAILY_WITHDRAW_LIMIT_ERROR)) {
                     this.logger.warn(`Daily withdraw limit error for order ${orderPubkey.toBase58()}, skipping...`);
                     return;
+                }
+
+                if (logsString.includes(ACCOUNT_DOES_NOT_EXIST_ERROR)) {
+                    const accountExists = await this.checkOrderExists(orderPubkey, "withdraw");
+                    if (!accountExists) {
+                        // Order already processed
+                        return;
+                    }
                 }
 
                 throw new Error(logs.join("\n"));
@@ -384,12 +389,8 @@ export class FillBot extends AppLogger {
         const quartzClient = await this.quartzClientPromise;
         
         try {
-            const endpoint = buildEndpointURL(`${config.INTERNAL_API_URL}/data/order/spend-limits`, {
-                publicKey: orderPubkey.toBase58()
-            });
-            const orderResponse = await fetchAndParse<{order: SpendLimitsOrderResponse | null}>(endpoint);
-
-            if (orderResponse.order === null) {
+            const accountExists = await this.checkOrderExists(orderPubkey, "spend-limits");
+            if (!accountExists) {
                 this.logger.info(`Spend limit order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
                 return;
             }
@@ -414,6 +415,16 @@ export class FillBot extends AppLogger {
                 const logs = await error.getLogs(this.connection)
                     .catch(() => [error]);
 
+                const logsString = logs.join("\n");
+                const ACCOUNT_DOES_NOT_EXIST_ERROR = `Error: Account does not exist or has no data ${orderPubkey.toBase58()}`;
+                if (logsString.includes(ACCOUNT_DOES_NOT_EXIST_ERROR)) {
+                    const accountExists = await this.checkOrderExists(orderPubkey, "spend-limits");
+                    if (!accountExists) {
+                        // Order already processed
+                        return;
+                    }
+                }
+
                 throw new Error(logs.join("\n"));
             }
             throw new Error(`${orderPubkey.toBase58()}: ${JSON.stringify(error)}`);
@@ -433,6 +444,18 @@ export class FillBot extends AppLogger {
             this.logger.error(`Error waiting for release: ${error}`);
             throw error;
         }
+    }
+
+    private checkOrderExists = async (
+        orderPubkey: PublicKey,
+        orderType: "withdraw" | "spend-limits"
+    ): Promise<boolean> => {
+        const endpoint = buildEndpointURL(`${config.INTERNAL_API_URL}/data/order/${orderType}`, {
+            publicKey: orderPubkey.toBase58()
+        });
+        const orderResponse = await fetchAndParse<{order: WithdrawOrderResponse | null}>(endpoint);
+
+        return orderResponse.order !== null;
     }
 
     private buildSendAndConfirm = async (
