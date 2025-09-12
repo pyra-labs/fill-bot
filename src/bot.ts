@@ -323,6 +323,8 @@ export class FillBot extends AppLogger {
                 this.logger.info(`Withdraw fill for order ${orderPubkey.toBase58()} confirmed: ${signature}`);
             }
         } catch (error) {
+            const ACCOUNT_DOES_NOT_EXIST_ERROR = `Account does not exist or has no data ${orderPubkey.toBase58()}`;
+
             if (error instanceof SendTransactionError) {
                 const logs = await error.getLogs(this.connection)
                     .catch(() => [error]);
@@ -331,8 +333,7 @@ export class FillBot extends AppLogger {
                 const INSUFFICIENT_COLLATERAL_ERROR = "\nProgram log: Error Insufficient collateral thrown at programs/drift/src/state/user.rs:598\nProgram log: User attempting to withdraw where total_collateral";
                 const INSUFFICIENT_BALANCE_ERROR = "\"Program dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH invoke [2]\",\n \"Program log: Instruction: Deposit\",\n \"Program log: AnchorError occurred. Error Code: InsufficientDeposit. Error Number: 6002. Error Message: Insufficient deposit.\"";
                 const DAILY_WITHDRAW_LIMIT_ERROR = "\nProgram log: AnchorError occurred. Error Code: DailyWithdrawLimit. Error Number: 6128. Error Message: DailyWithdrawLimit.\nProgram dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH";
-                const ACCOUNT_DOES_NOT_EXIST_ERROR = `Error: Account does not exist or has no data ${orderPubkey.toBase58()}`;
-
+                
                 if (logsString.includes(INSUFFICIENT_COLLATERAL_ERROR) || logsString.includes(INSUFFICIENT_BALANCE_ERROR)) {
                     this.logger.info(`Insufficient collateral error for order ${orderPubkey.toBase58()}, skipping...`);
                     return;
@@ -344,14 +345,16 @@ export class FillBot extends AppLogger {
                 }
 
                 if (logsString.includes(ACCOUNT_DOES_NOT_EXIST_ERROR)) {
-                    const accountExists = await this.checkOrderExists(orderPubkey, "withdraw");
-                    if (!accountExists) {
-                        // Order already processed
-                        return;
-                    }
+                    // Order already processed
+                    return;
                 }
 
                 throw new Error(logs.join("\n"));
+            }
+
+            if (error instanceof Error && error.message.includes(ACCOUNT_DOES_NOT_EXIST_ERROR)) {
+                // Order already processed
+                return;
             }
 
             throw error;
@@ -411,22 +414,26 @@ export class FillBot extends AppLogger {
                 this.logger.info(`Spend limit fill for order ${orderPubkey.toBase58()} confirmed: ${signature}`);
             }
         } catch (error) {
+            const ACCOUNT_DOES_NOT_EXIST_ERROR = `Account does not exist or has no data ${orderPubkey.toBase58()}`;
+
             if (error instanceof SendTransactionError) {
                 const logs = await error.getLogs(this.connection)
                     .catch(() => [error]);
 
                 const logsString = logs.join("\n");
-                const ACCOUNT_DOES_NOT_EXIST_ERROR = `Error: Account does not exist or has no data ${orderPubkey.toBase58()}`;
                 if (logsString.includes(ACCOUNT_DOES_NOT_EXIST_ERROR)) {
-                    const accountExists = await this.checkOrderExists(orderPubkey, "spend-limits");
-                    if (!accountExists) {
-                        // Order already processed
-                        return;
-                    }
+                    // Order already processed
+                    return;
                 }
 
                 throw new Error(logs.join("\n"));
             }
+
+            if (error instanceof Error && error.message.includes(ACCOUNT_DOES_NOT_EXIST_ERROR)) {
+                // Order already processed
+                return;
+            }
+
             throw new Error(`${orderPubkey.toBase58()}: ${JSON.stringify(error)}`);
         }
     }
