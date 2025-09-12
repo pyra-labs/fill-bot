@@ -263,8 +263,6 @@ export class FillBot extends AppLogger {
         orderPubkey: PublicKey,
         order: WithdrawOrder
     ): Promise<void> => {
-        const quartzClient = await this.quartzClientPromise;
-
         try {
             this.logger.info(`Scheduling withdraw fill for order ${orderPubkey.toBase58()}`);
             await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
@@ -274,8 +272,26 @@ export class FillBot extends AppLogger {
         }
 
         try {
-            const orderExists = await this.checkOrderExists(orderPubkey, "withdraw");
-            if (!orderExists) {
+            await retryWithBackoff(
+                async () => {
+                    await this.fillWithdraw(orderPubkey, order);
+                },
+                3
+            );
+        } catch (error) {
+            this.logger.error(`Error scheduling withdraw fill for order ${orderPubkey.toBase58()}: ${error}`);
+        }
+    }
+
+    private fillWithdraw = async (
+        orderPubkey: PublicKey,
+        order: WithdrawOrder
+    ): Promise<void> => {
+        const quartzClient = await this.quartzClientPromise;
+
+        try {
+            const accountExists = await this.checkOrderExists(orderPubkey, "withdraw");
+            if (!accountExists) {
                 this.logger.info(`Withdraw order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
                 return;
             }
@@ -312,11 +328,12 @@ export class FillBot extends AppLogger {
                     .catch(() => [error]);
 
                 const logsString = logs.join("\n");
-                const ACCOUNT_DOES_NOT_EXIST_ERROR = `Error: Account does not exist or has no data ${orderPubkey.toBase58()}`;
-                const INSUFFICIENT_COLLATERAL_ERROR = "\nProgram log: Error Insufficient collateral thrown at programs/drift/src/state/user.rs:596\nProgram log: User attempting to withdraw where total_collateral";
+                const INSUFFICIENT_COLLATERAL_ERROR = "\nProgram log: Error Insufficient collateral thrown at programs/drift/src/state/user.rs:598\nProgram log: User attempting to withdraw where total_collateral";
+                const INSUFFICIENT_BALANCE_ERROR = "\"Program dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH invoke [2]\",\n \"Program log: Instruction: Deposit\",\n \"Program log: AnchorError occurred. Error Code: InsufficientDeposit. Error Number: 6002. Error Message: Insufficient deposit.\"";
                 const DAILY_WITHDRAW_LIMIT_ERROR = "\nProgram log: AnchorError occurred. Error Code: DailyWithdrawLimit. Error Number: 6128. Error Message: DailyWithdrawLimit.\nProgram dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH";
+                const ACCOUNT_DOES_NOT_EXIST_ERROR = `Error: Account does not exist or has no data ${orderPubkey.toBase58()}`;
 
-                if (logsString.includes(INSUFFICIENT_COLLATERAL_ERROR)) {
+                if (logsString.includes(INSUFFICIENT_COLLATERAL_ERROR) || logsString.includes(INSUFFICIENT_BALANCE_ERROR)) {
                     this.logger.info(`Insufficient collateral error for order ${orderPubkey.toBase58()}, skipping...`);
                     return;
                 }
@@ -334,11 +351,10 @@ export class FillBot extends AppLogger {
                     }
                 }
 
-                this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${logs.join("\n")}`);
-                return;
+                throw new Error(logs.join("\n"));
             }
-            this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${JSON.stringify(error)}`);
-            return;
+
+            throw error;
         }
     }
 
@@ -346,8 +362,6 @@ export class FillBot extends AppLogger {
         orderPubkey: PublicKey,
         order: SpendLimitsOrder
     ): Promise<void> => {
-        const quartzClient = await this.quartzClientPromise;
-
         try {
             this.logger.info(`Scheduling spend limit fill for order ${orderPubkey.toBase58()}`);
             await this.waitForRelease(order.timeLock.releaseSlot.toNumber());
@@ -357,8 +371,26 @@ export class FillBot extends AppLogger {
         }
 
         try {
-            const orderExists = await this.checkOrderExists(orderPubkey, "spend-limits");
-            if (!orderExists) {
+            await retryWithBackoff(
+                async () => {
+                    await this.fillSpendLimit(orderPubkey, order);
+                },
+                3
+            );
+        } catch (error) {
+            this.logger.error(`Error scheduling spend limit fill for order ${orderPubkey.toBase58()}: ${error}`);
+        }
+    }
+
+    private fillSpendLimit = async (
+        orderPubkey: PublicKey,
+        order: SpendLimitsOrder
+    ): Promise<void> => {
+        const quartzClient = await this.quartzClientPromise;
+        
+        try {
+            const accountExists = await this.checkOrderExists(orderPubkey, "spend-limits");
+            if (!accountExists) {
                 this.logger.info(`Spend limit order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`);
                 return;
             }
@@ -393,11 +425,9 @@ export class FillBot extends AppLogger {
                     }
                 }
 
-                this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${logs.join("\n")}`);
-                return;
+                throw new Error(logs.join("\n"));
             }
-            this.logger.error(`Error sending transaction for order ${orderPubkey.toBase58()}: ${JSON.stringify(error)}`);
-            return;
+            throw new Error(`${orderPubkey.toBase58()}: ${JSON.stringify(error)}`);
         }
     }
 
