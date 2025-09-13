@@ -1,6 +1,7 @@
 import { AppLogger } from "@quartz-labs/logger";
 import {
 	BN,
+	getVaultPublicKey,
 	MARKET_INDEX_SOL,
 	MarketIndex,
 	QuartzClient,
@@ -133,7 +134,7 @@ export class FillBot extends AppLogger {
 		marketIndex: MarketIndex,
 	): Promise<void> => {
 		if (SUSPECT_VAULTS.includes(user.vaultPubkey.toBase58())) {
-			this.logger.info(
+			this.logger.warn(
 				`Suspect vault detected, skipping deposit fill for user ${user.pubkey.toBase58()}`,
 			);
 			return;
@@ -337,8 +338,9 @@ export class FillBot extends AppLogger {
 		orderPubkey: PublicKey,
 		order: WithdrawOrder,
 	): Promise<void> => {
-		if (SUSPECT_VAULTS.includes(order.timeLock.owner.toBase58())) {
-			this.logger.info(
+		const vault = getVaultPublicKey(order.timeLock.owner);
+		if (SUSPECT_VAULTS.includes(vault.toBase58())) {
+			this.logger.warn(
 				`Suspect vault detected, skipping withdraw fill for order ${orderPubkey.toBase58()}`,
 			);
 			return;
@@ -475,8 +477,9 @@ export class FillBot extends AppLogger {
 		orderPubkey: PublicKey,
 		order: SpendLimitsOrder,
 	): Promise<void> => {
-		if (SUSPECT_VAULTS.includes(order.timeLock.owner.toBase58())) {
-			this.logger.info(
+		const vault = getVaultPublicKey(order.timeLock.owner);
+		if (SUSPECT_VAULTS.includes(vault.toBase58())) {
+			this.logger.warn(
 				`Suspect vault detected, skipping spend limit fill for order ${orderPubkey.toBase58()}`,
 			);
 			return;
