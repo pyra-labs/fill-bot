@@ -56,13 +56,6 @@ export class FillBot extends AppLogger {
 		this.wallet = config.FILLER_KEYPAIR;
 	}
 
-	public async shutdown(): Promise<void> {
-		await this.sendEmail(
-			"URGENT: Graceful shutdown initiated",
-			"Received shutdown signal. This can happen during a new deployment, or if a fatal error occured. Please check the deployment status is this was not manually triggered.",
-		);
-	}
-
 	public async start(): Promise<void> {
 		const balance = await this.connection.getBalance(this.wallet.publicKey);
 
