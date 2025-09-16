@@ -331,9 +331,9 @@ export class FillBot extends AppLogger {
 		order: WithdrawOrder,
 	): Promise<void> => {
 		if (IGNORED_USERS.includes(order.timeLock.owner.toBase58())) {
-			this.logger.warn(
-				`Suspect vault detected, skipping withdraw fill for order ${orderPubkey.toBase58()}`,
-			);
+			// this.logger.warn(
+			// 	`Suspect vault detected, skipping withdraw fill for order ${orderPubkey.toBase58()}`,
+			// );
 			return;
 		}
 
@@ -391,9 +391,9 @@ export class FillBot extends AppLogger {
 				TOKENS[marketIndex].mint,
 			);
 			if (marketIndex !== MARKET_INDEX_SOL && !doesAtaExist) {
-				this.logger.info(
-					`No ATA found for withdraw order, skipping... {account: ${orderPubkey.toBase58()}, owner: ${order.timeLock.owner.toBase58()}, marketIndex: ${marketIndex}}`,
-				);
+				// this.logger.info(
+				// 	`No ATA found for withdraw order, skipping... {account: ${orderPubkey.toBase58()}, owner: ${order.timeLock.owner.toBase58()}, marketIndex: ${marketIndex}}`,
+				// );
 				return;
 			}
 
@@ -401,7 +401,9 @@ export class FillBot extends AppLogger {
 			const ixData = await user.makeFulfilWithdrawIxs(
 				orderPubkey,
 				this.wallet.publicKey,
+				undefined,
 			);
+
 			const signature = await this.buildSendAndConfirm(
 				ixData.ixs,
 				ixData.lookupTables,
