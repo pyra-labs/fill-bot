@@ -151,11 +151,14 @@ export class FillBot extends AppLogger {
 				const logsString = logs.join("\n");
 				const SPOT_POSITION_UNAVAILABLE_ERROR =
 					"\nProgram log: AnchorError occurred. Error Code: NoSpotPositionAvailable. Error Number: 6084. Error Message: NoSpotPositionAvailable.\nProgram dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH";
+				const INSUFFICIENT_DEPOSIT_ERROR =
+					'"Program log: Instruction: Deposit","Program log: AnchorError occurred. Error Code: InsufficientDeposit. Error Number: 6002. Error Message: Insufficient deposit.","Program dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH;';
 
 				if (logsString.includes(SPOT_POSITION_UNAVAILABLE_ERROR)) {
-					this.logger.info(
-						`Spot position unavailable error for user ${user.pubkey.toBase58()} (market index ${marketIndex}), skipping...`,
-					);
+					return;
+				}
+
+				if (logsString.includes(INSUFFICIENT_DEPOSIT_ERROR)) {
 					return;
 				}
 			}
