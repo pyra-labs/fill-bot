@@ -23,7 +23,7 @@ import {
 	SendTransactionError,
 } from "@solana/web3.js";
 import config from "./config/config.js";
-import { IGNORED_USERS, MIN_LAMPORTS_BALANCE } from "./config/constants.js";
+import { MIN_LAMPORTS_BALANCE } from "./config/constants.js";
 import type { AddressLookupTableAccount } from "@solana/web3.js";
 import {
 	buildEndpointURL,
@@ -125,13 +125,6 @@ export class FillBot extends AppLogger {
 		user: QuartzUser,
 		marketIndex: MarketIndex,
 	): Promise<void> => {
-		if (IGNORED_USERS.includes(user.pubkey.toBase58())) {
-			this.logger.warn(
-				`Suspect vault detected, skipping deposit fill for user ${user.pubkey.toBase58()}`,
-			);
-			return;
-		}
-
 		try {
 			const { ixs, lookupTables, signers } = await user.makeFulfilDepositIxs(
 				marketIndex,
@@ -332,13 +325,6 @@ export class FillBot extends AppLogger {
 		orderPubkey: PublicKey,
 		order: WithdrawOrder,
 	): Promise<void> => {
-		if (IGNORED_USERS.includes(order.timeLock.owner.toBase58())) {
-			// this.logger.warn(
-			// 	`Suspect vault detected, skipping withdraw fill for order ${orderPubkey.toBase58()}`,
-			// );
-			return;
-		}
-
 		try {
 			this.logger.info(
 				`Scheduling withdraw fill for order ${orderPubkey.toBase58()}`,
@@ -472,13 +458,6 @@ export class FillBot extends AppLogger {
 		orderPubkey: PublicKey,
 		order: SpendLimitsOrder,
 	): Promise<void> => {
-		if (IGNORED_USERS.includes(order.timeLock.owner.toBase58())) {
-			this.logger.warn(
-				`Suspect vault detected, skipping spend limit fill for order ${orderPubkey.toBase58()}`,
-			);
-			return;
-		}
-
 		try {
 			this.logger.info(
 				`Scheduling spend limit fill for order ${orderPubkey.toBase58()}`,
