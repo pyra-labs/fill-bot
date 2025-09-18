@@ -294,12 +294,18 @@ export class FillBot extends AppLogger {
 				ix: MessageCompiledInstruction,
 				accountKeys: PublicKey[],
 			) => {
+				let orderPubkey: PublicKey;
 				try {
 					const orderIndex = ix.accountKeyIndexes?.[ORDER_INDEX];
 					if (orderIndex === undefined || accountKeys[orderIndex] === undefined)
 						throw new Error("Order index not found");
-					const orderPubkey = accountKeys[orderIndex];
+					orderPubkey = accountKeys[orderIndex];
+				} catch (error) {
+					this.logger.error(`Error finding order index: ${error}`);
+					return;
+				}
 
+				try {
 					let order: T;
 					if (instructionName === "InitiateWithdraw") {
 						order = (await quartzClient.parseOpenWithdrawOrder(
@@ -315,6 +321,16 @@ export class FillBot extends AppLogger {
 
 					scheduleOrderFill(orderPubkey, order);
 				} catch (error) {
+					if (
+						error instanceof Error &&
+						error.message.includes(
+							`Account does not exist or has no data ${orderPubkey.toBase58()}`,
+						)
+					) {
+						// Order already processed
+						return;
+					}
+
 					this.logger.error(`Error processing order instruction: ${error}`);
 				}
 			},
