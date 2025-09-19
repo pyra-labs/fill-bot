@@ -143,8 +143,9 @@ export class FillBot extends AppLogger {
 				const logs = await error.getLogs(this.connection).catch(() => [error]);
 				const logsString = logs.join("\n");
 				const SPOT_POSITION_UNAVAILABLE_ERROR =
-					"\nProgram log: AnchorError occurred. Error Code: NoSpotPositionAvailable. Error Number: 6084. Error Message: NoSpotPositionAvailable.\nProgram dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH";
-				const INSUFFICIENT_DEPOSIT_ERROR = `\"Program log: Instruction: Deposit\",\"Program log: AnchorError occurred. Error Code: InsufficientDeposit. Error Number: 6002. Error Message: Insufficient deposit.\",\"Program dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH`;
+					"Program log: AnchorError occurred. Error Code: NoSpotPositionAvailable. Error Number: 6084. Error Message: NoSpotPositionAvailable.";
+				const INSUFFICIENT_DEPOSIT_ERROR =
+					"Program log: AnchorError occurred. Error Code: InsufficientDeposit. Error Number: 6002. Error Message: Insufficient deposit.";
 
 				if (logsString.includes(SPOT_POSITION_UNAVAILABLE_ERROR)) {
 					return;
@@ -427,15 +428,15 @@ export class FillBot extends AppLogger {
 
 				const logsString = logs.join("\n");
 				const INSUFFICIENT_COLLATERAL_ERROR =
-					"\nProgram log: Error Insufficient collateral thrown at programs/drift/src/state/user.rs";
-				const INSUFFICIENT_BALANCE_ERROR =
-					'"Program dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH invoke [2]",\n "Program log: Instruction: Deposit",\n "Program log: AnchorError occurred. Error Code: InsufficientDeposit. Error Number: 6002. Error Message: Insufficient deposit."';
+					"Program log: Error Insufficient collateral thrown at programs/drift/src/state/user.rs";
+				const INSUFFICIENT_DEPOSIT_ERROR =
+					"Program log: AnchorError occurred. Error Code: InsufficientDeposit. Error Number: 6002. Error Message: Insufficient deposit.";
 				const DAILY_WITHDRAW_LIMIT_ERROR =
-					"\nProgram log: AnchorError occurred. Error Code: DailyWithdrawLimit. Error Number: 6128. Error Message: DailyWithdrawLimit.\nProgram dRiftyHA39MWEi3m9aunc5MzRF1JYuBsbn6VPcn33UH";
+					"Program log: AnchorError occurred. Error Code: DailyWithdrawLimit. Error Number: 6128. Error Message: DailyWithdrawLimit.";
 
 				if (
 					logsString.includes(INSUFFICIENT_COLLATERAL_ERROR) ||
-					logsString.includes(INSUFFICIENT_BALANCE_ERROR)
+					logsString.includes(INSUFFICIENT_DEPOSIT_ERROR)
 				) {
 					this.logger.info(
 						`Insufficient collateral error for order ${orderPubkey.toBase58()}, skipping...`,
