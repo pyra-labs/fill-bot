@@ -1,6 +1,8 @@
 import { AppLogger } from "@quartz-labs/logger";
 import {
 	BN,
+	getMarketIndicesRecord,
+	isMarketIndex,
 	MARKET_INDEX_SOL,
 	MarketIndex,
 	QuartzClient,
@@ -37,6 +39,7 @@ import type {
 	SpendLimitsOrderResponse,
 	WithdrawOrderResponse,
 } from "./types/Orders.interface.js";
+import type { VaultResponse } from "./types/Vault.interface.js";
 
 export class FillBot extends AppLogger {
 	private connection: AdvancedConnection;
@@ -86,31 +89,31 @@ export class FillBot extends AppLogger {
 	private processDepositAddresses = async (): Promise<void> => {
 		try {
 			const quartzClient = await this.quartzClientPromise;
-			const owners = await retryWithBackoff(
-				async () => await quartzClient.getAllQuartzAccountOwnerPubkeys(),
-			);
-			const users = await retryWithBackoff(async () => {
-				const users = await quartzClient.getMultipleQuartzAccounts(owners);
-				return users.filter((user) => user !== null); // Skip users without a Drift account
-			});
+
+			let depositAddresses: {
+				owner: PublicKey;
+				balances: Record<MarketIndex, BN>;
+			}[] = [];
+			try {
+				depositAddresses = await this.getAllDepositAddressesAPI();
+			} catch {
+				depositAddresses = await this.getAllDepositAddressesRPC();
+			}
 
 			this.logger.info(
-				`Processing deposit addresses for ${users.length} users`,
+				`Processing deposit addresses for ${depositAddresses.length} users`,
 			);
 
-			for (const user of users) {
-				if (await this.checkRequiresUpgrade(user)) {
-					continue; // TODO: Remove once all users are upgraded
-				}
-
-				const depositAddressBalances =
-					await user.getAllDepositAddressBalances();
+			for (const depositAddress of depositAddresses) {
 				for (const marketIndex of MarketIndex) {
-					const balance: BN = depositAddressBalances[marketIndex];
+					const balance: BN = depositAddress.balances[marketIndex];
 					if (balance.lte(ZERO)) {
 						continue;
 					}
 
+					const user = await quartzClient.getQuartzAccount(
+						depositAddress.owner,
+					);
 					this.fulfilDeposit(user, marketIndex);
 				}
 			}
@@ -119,6 +122,82 @@ export class FillBot extends AppLogger {
 				`Error processing deposit addresses: ${error} - ${JSON.stringify(error)}`,
 			);
 		}
+	};
+
+	private getAllDepositAddressesAPI = async (): Promise<
+		{
+			owner: PublicKey;
+			balances: Record<MarketIndex, BN>;
+		}[]
+	> => {
+		const response = await fetchAndParse<{
+			users: VaultResponse[];
+		}>(`${config.INTERNAL_API_URL}/data/all-open-orders`);
+
+		const depositAddresses: {
+			owner: PublicKey;
+			balances: Record<MarketIndex, BN>;
+		}[] = [];
+
+		for (const user of response.users) {
+			const owner = new PublicKey(user.vault.owner);
+			const balances = getMarketIndicesRecord(ZERO);
+
+			const LAMPORTS_RENT = 890880;
+			balances[MARKET_INDEX_SOL] = new BN(
+				Math.max(0, user.depositAddress.lamports - LAMPORTS_RENT),
+			);
+
+			for (const splAccount of user.depositAddress.splAccounts) {
+				const mint = new PublicKey(splAccount.mint);
+				const token = Object.entries(TOKENS).find(
+					(value) => value[1].mint === mint,
+				);
+
+				if (!token || !isMarketIndex(Number(token[0]))) continue;
+				const marketIndex = Number(token[0]) as MarketIndex;
+
+				balances[marketIndex] = new BN(splAccount.amount);
+			}
+
+			depositAddresses.push({
+				owner,
+				balances,
+			});
+		}
+
+		return depositAddresses;
+	};
+
+	private getAllDepositAddressesRPC = async (): Promise<
+		{
+			owner: PublicKey;
+			balances: Record<MarketIndex, BN>;
+		}[]
+	> => {
+		const quartzClient = await this.quartzClientPromise;
+		const owners = await retryWithBackoff(
+			async () => await quartzClient.getAllQuartzAccountOwnerPubkeys(),
+		);
+		const users = await retryWithBackoff(async () => {
+			return await quartzClient.getMultipleQuartzAccounts(owners);
+		});
+
+		const depositAddresses: {
+			owner: PublicKey;
+			balances: Record<MarketIndex, number>;
+		}[] = [];
+
+		for (const user of users) {
+			if (!user) continue;
+			const balances = await user.getAllDepositAddressBalances();
+			depositAddresses.push({
+				owner: user.pubkey,
+				balances,
+			});
+		}
+
+		return depositAddresses;
 	};
 
 	private fulfilDeposit = async (
@@ -403,10 +482,24 @@ export class FillBot extends AppLogger {
 			}
 
 			const user = await quartzClient.getQuartzAccount(order.timeLock.owner);
+
+			const maxWithdraw = await user
+				.getWithdrawalLimit(
+					order.driftMarketIndex,
+					order.reduceOnly,
+					[], // Ignore other open orders
+				)
+				.then((bn) => bn.toNumber() as number);
+			if (maxWithdraw < order.amountBaseUnits * 0.8) {
+				return; // Skip withdraw orders with insufficient balance to be filled
+			}
+			// const amountToWithdraw = Math.min(maxWithdraw, order.amountBaseUnits);
+
 			const ixData = await user.makeFulfilWithdrawIxs(
 				orderPubkey,
 				this.wallet.publicKey,
 				undefined,
+				// amountToWithdraw, // TODO: Add back in
 			);
 
 			const signature = await this.buildSendAndConfirm(
