@@ -90,13 +90,18 @@ export class FillBot extends AppLogger {
 		try {
 			const quartzClient = await this.quartzClientPromise;
 
+			this.logger.info("Processing deposit addresses");
+
 			let depositAddresses: {
 				owner: PublicKey;
 				balances: Record<MarketIndex, BN>;
 			}[] = [];
 			try {
 				depositAddresses = await this.getAllDepositAddressesAPI();
-			} catch {
+			} catch (error) {
+				this.logger.warn(
+					`Deposit addresses API failed, falling back to RPC: ${error} - ${JSON.stringify(error)}`,
+				);
 				depositAddresses = await this.getAllDepositAddressesRPC();
 			}
 
@@ -132,7 +137,7 @@ export class FillBot extends AppLogger {
 	> => {
 		const response = await fetchAndParse<{
 			users: VaultResponse[];
-		}>(`${config.INTERNAL_API_URL}/data/all-open-orders`);
+		}>(`${config.INTERNAL_API_URL}/data/all-users`);
 
 		const depositAddresses: {
 			owner: PublicKey;
@@ -483,14 +488,12 @@ export class FillBot extends AppLogger {
 
 			const user = await quartzClient.getQuartzAccount(order.timeLock.owner);
 
-			const maxWithdraw = await user
-				.getWithdrawalLimit(
-					order.driftMarketIndex,
-					order.reduceOnly,
-					[], // Ignore other open orders
-				)
-				.then((bn) => bn.toNumber() as number);
-			if (maxWithdraw < order.amountBaseUnits * 0.8) {
+			const maxWithdraw = await user.getWithdrawalLimit(
+				marketIndex,
+				order.reduceOnly,
+				[], // Ignore other open orders
+			);
+			if (maxWithdraw.toNumber() < order.amountBaseUnits * 0.8) {
 				return; // Skip withdraw orders with insufficient balance to be filled
 			}
 			// const amountToWithdraw = Math.min(maxWithdraw, order.amountBaseUnits);
@@ -548,6 +551,8 @@ export class FillBot extends AppLogger {
 					// Order already processed
 					return;
 				}
+
+				console.error(error);
 
 				throw new Error(logs.join("\n"));
 			}
@@ -748,14 +753,4 @@ export class FillBot extends AppLogger {
 			);
 		}
 	};
-
-	private async checkRequiresUpgrade(user: QuartzUser): Promise<boolean> {
-		const vaultPdaAccount = await this.connection.getAccountInfo(
-			user.vaultPubkey,
-		);
-		if (vaultPdaAccount === null) return true;
-
-		const OLD_VAULT_SIZE = 41;
-		return vaultPdaAccount.data.length <= OLD_VAULT_SIZE;
-	}
 }
