@@ -145,7 +145,7 @@ export class FillBot extends AppLogger {
 		}[] = [];
 
 		for (const user of response.users) {
-			const owner = new PublicKey(user.vault.owner);
+			const owner = new PublicKey(user.vaultAccount.owner);
 			const balances = getMarketIndicesRecord(ZERO);
 
 			const LAMPORTS_RENT = 890880;
@@ -155,8 +155,8 @@ export class FillBot extends AppLogger {
 
 			for (const splAccount of user.depositAddress.splAccounts) {
 				const mint = new PublicKey(splAccount.mint);
-				const token = Object.entries(TOKENS).find(
-					(value) => value[1].mint === mint,
+				const token = Object.entries(TOKENS).find((value) =>
+					value[1].mint.equals(mint),
 				);
 
 				if (!token || !isMarketIndex(Number(token[0]))) continue;
