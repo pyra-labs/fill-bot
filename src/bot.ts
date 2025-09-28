@@ -496,15 +496,12 @@ export class FillBot extends AppLogger {
 			if (maxWithdraw.toNumber() < order.amountBaseUnits * 0.8) {
 				return; // Skip withdraw orders with insufficient balance to be filled
 			}
-			// const amountToWithdraw = Math.min(maxWithdraw, order.amountBaseUnits);
-
+			const amountToWithdraw = Math.min(maxWithdraw, order.amountBaseUnits);
 			const ixData = await user.makeFulfilWithdrawIxs(
 				orderPubkey,
 				this.wallet.publicKey,
-				undefined,
-				// amountToWithdraw, // TODO: Add back in
+				new BN(amountToWithdraw),
 			);
-
 			const signature = await this.buildSendAndConfirm(
 				ixData.ixs,
 				ixData.lookupTables,
