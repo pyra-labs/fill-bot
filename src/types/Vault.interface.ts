@@ -1,6 +1,6 @@
 export interface VaultResponse {
-	publicKey: string;
-	vault: VaultData;
+	vaultAddress: string;
+	vaultAccount: VaultData;
 	depositAddress: {
 		lamports: number;
 		splAccounts: DepositAddressSplAccount[];
