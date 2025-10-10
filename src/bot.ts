@@ -80,10 +80,10 @@ export class FillBot extends AppLogger {
 		this.logger.info(`Balance: ${balance / LAMPORTS_PER_SOL} SOL`);
 
 		this.checkOpenOrders(false);
-		setInterval(this.checkOpenOrders, 1000 * 60 * 3); // 3 minutes
+		setInterval(this.checkOpenOrders, 1000 * 60 * 2); // 2 minutes
 
 		this.processDepositAddresses();
-		setInterval(this.processDepositAddresses, 1000 * 60 * 3); // 3 minutes
+		setInterval(this.processDepositAddresses, 1000 * 60 * 1); // 1 minute
 	}
 
 	private processDepositAddresses = async (): Promise<void> => {
@@ -707,12 +707,21 @@ export class FillBot extends AppLogger {
 				}
 			}
 
-			const transaction = await buildTransactionMinCU(
+			const { transaction, gasFee } = await buildTransactionMinCU(
 				this.connection,
 				instructions,
 				this.wallet.publicKey,
 				lookupTables,
 			);
+
+			const MAX_GAS_FEE = 0.01 * LAMPORTS_PER_SOL;
+			if (gasFee > MAX_GAS_FEE) {
+				this.logger.warn(
+					`Gas fee for order ${orderAccount?.toBase58()} is too high, skipping...`,
+				);
+				return null;
+			}
+
 			transaction.sign(signers);
 
 			const signature = await retryWithBackoff(
