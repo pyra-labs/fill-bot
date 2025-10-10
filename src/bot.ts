@@ -714,7 +714,7 @@ export class FillBot extends AppLogger {
 				lookupTables,
 			);
 
-			const MAX_GAS_FEE = 0.01 * LAMPORTS_PER_SOL;
+			const MAX_GAS_FEE = 0.001 * LAMPORTS_PER_SOL;
 			if (gasFee > MAX_GAS_FEE) {
 				this.logger.warn(
 					`Gas fee for order ${orderAccount?.toBase58()} is too high, skipping...`,
