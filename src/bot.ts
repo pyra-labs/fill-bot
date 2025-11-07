@@ -71,9 +71,12 @@ export class FillBot extends AppLogger {
 			1000 * 60 * 60 * 24,
 		);
 
-		await this.listenForOrder("InitiateWithdraw", this.scheduleWithdraw);
+		await this.listenForOrder("InitiateWithdrawDrift", this.scheduleWithdraw);
 
-		await this.listenForOrder("InitiateSpendLimit", this.scheduleSpendLimit);
+		await this.listenForOrder(
+			"InitiateUpdateSpendLimits",
+			this.scheduleSpendLimit,
+		);
 
 		this.logger.info("Fill Bot Initialized");
 		this.logger.info(`Wallet Address: ${this.wallet.publicKey.toBase58()}`);
@@ -365,7 +368,7 @@ export class FillBot extends AppLogger {
 	};
 
 	private listenForOrder = async <T extends WithdrawOrder | SpendLimitsOrder>(
-		instructionName: "InitiateWithdraw" | "InitiateSpendLimit",
+		instructionName: "InitiateWithdrawDrift" | "InitiateUpdateSpendLimits",
 		scheduleOrderFill: (orderPubkey: PublicKey, order: T) => Promise<void>,
 	): Promise<void> => {
 		const quartzClient = await this.quartzClientPromise;
@@ -379,20 +382,18 @@ export class FillBot extends AppLogger {
 				ix: MessageCompiledInstruction,
 				accountKeys: PublicKey[],
 			) => {
-				let orderPubkey: PublicKey;
-				try {
-					const orderIndex = ix.accountKeyIndexes?.[ORDER_INDEX];
-					if (orderIndex === undefined || accountKeys[orderIndex] === undefined)
-						throw new Error("Order index not found");
-					orderPubkey = accountKeys[orderIndex];
-				} catch (error) {
-					this.logger.error(`Error finding order index: ${error}`);
+				const orderIndex = ix.accountKeyIndexes?.[ORDER_INDEX];
+				if (orderIndex === undefined || accountKeys[orderIndex] === undefined) {
+					this.logger.error(
+						`Error finding order index, keys: ${ix.accountKeyIndexes}`,
+					);
 					return;
 				}
+				const orderPubkey = accountKeys[orderIndex];
 
 				try {
 					let order: T;
-					if (instructionName === "InitiateWithdraw") {
+					if (instructionName === "InitiateWithdrawDrift") {
 						order = (await quartzClient.parseOpenWithdrawOrder(
 							orderPubkey,
 							10,
