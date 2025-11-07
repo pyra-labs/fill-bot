@@ -210,7 +210,7 @@ export class FillBot extends AppLogger {
 		marketIndex: MarketIndex,
 	): Promise<void> => {
 		try {
-			const { ixs, lookupTables, signers } = await user.makeFulfilDepositIxs(
+			const { ixs, lookupTables, signers } = await user.makeDepositIxs(
 				marketIndex,
 				this.wallet.publicKey,
 			);
@@ -279,7 +279,7 @@ export class FillBot extends AppLogger {
 				account: {
 					timeLock: {
 						owner: new PublicKey(order.account.time_lock.owner),
-						isOwnerPayer: order.account.time_lock.is_owner_payer,
+						payer: new PublicKey(order.account.time_lock.payer),
 						releaseSlot: new BN(order.account.time_lock.release_slot),
 					},
 					amountBaseUnits: new BN(order.account.amount_base_units),
@@ -296,7 +296,7 @@ export class FillBot extends AppLogger {
 				account: {
 					timeLock: {
 						owner: new PublicKey(order.account.time_lock.owner),
-						isOwnerPayer: order.account.time_lock.is_owner_payer,
+						payer: new PublicKey(order.account.time_lock.payer),
 						releaseSlot: new BN(order.account.time_lock.release_slot),
 					},
 					spendLimitPerTransaction: new BN(
@@ -493,13 +493,18 @@ export class FillBot extends AppLogger {
 				order.reduceOnly,
 				[], // Ignore other open orders
 			);
-			if (maxWithdraw.toNumber() < order.amountBaseUnits * 0.8) {
+			if (maxWithdraw.toNumber() < order.amountBaseUnits * 0.85) {
 				return; // Skip withdraw orders with insufficient balance to be filled
 			}
+			console.log({
+				maxWithdraw: maxWithdraw.toNumber(),
+				orderAmount: order.amountBaseUnits.toNumber(),
+			});
 			const amountToWithdraw = Math.min(maxWithdraw, order.amountBaseUnits);
 			const ixData = await user.makeFulfilWithdrawIxs(
 				orderPubkey,
 				this.wallet.publicKey,
+				undefined, // No admin required
 				new BN(amountToWithdraw),
 			);
 			const signature = await this.buildSendAndConfirm(
@@ -618,10 +623,7 @@ export class FillBot extends AppLogger {
 
 		try {
 			const user = await quartzClient.getQuartzAccount(order.timeLock.owner);
-			const ixData = await user.makeFulfilSpendLimitsIxs(
-				orderPubkey,
-				this.wallet.publicKey,
-			);
+			const ixData = await user.makeFulfilUpdateSpendLimitsIxs(orderPubkey);
 			const signature = await this.buildSendAndConfirm(
 				ixData.ixs,
 				ixData.lookupTables,
