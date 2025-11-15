@@ -475,16 +475,23 @@ export class FillBot extends AppLogger {
 
 		try {
 			const marketIndex = order.driftMarketIndex.toNumber() as MarketIndex;
-			const doesAtaExist = await hasAta(
-				this.connection,
-				order.destination,
-				TOKENS[marketIndex].mint,
-			);
-			if (marketIndex !== MARKET_INDEX_SOL && !doesAtaExist) {
-				// this.logger.info(
-				// 	`No ATA found for withdraw order, skipping... {account: ${orderPubkey.toBase58()}, owner: ${order.timeLock.owner.toBase58()}, marketIndex: ${marketIndex}}`,
-				// );
-				return;
+			if (marketIndex !== MARKET_INDEX_SOL) {
+				const doesAtaExist = await hasAta(
+					this.connection,
+					order.destination,
+					TOKENS[marketIndex].mint,
+				);
+
+				if (!doesAtaExist) return;
+			}
+			if (marketIndex === MARKET_INDEX_SOL) {
+				const destinationBalance = await this.connection.getBalance(
+					order.destination,
+				);
+				const minRent =
+					await this.connection.getMinimumBalanceForRentExemption(0);
+
+				if (destinationBalance < minRent) return;
 			}
 
 			const user = await quartzClient.getQuartzAccount(order.timeLock.owner);
@@ -497,10 +504,6 @@ export class FillBot extends AppLogger {
 			if (maxWithdraw.toNumber() < order.amountBaseUnits * 0.85) {
 				return; // Skip withdraw orders with insufficient balance to be filled
 			}
-			console.log({
-				maxWithdraw: maxWithdraw.toNumber(),
-				orderAmount: order.amountBaseUnits.toNumber(),
-			});
 			const amountToWithdraw = Math.min(maxWithdraw, order.amountBaseUnits);
 			const ixData = await user.makeFulfilWithdrawIxs(
 				orderPubkey,
@@ -508,6 +511,7 @@ export class FillBot extends AppLogger {
 				undefined, // No admin required
 				new BN(amountToWithdraw),
 			);
+
 			const signature = await this.buildSendAndConfirm(
 				ixData.ixs,
 				ixData.lookupTables,
@@ -667,8 +671,11 @@ export class FillBot extends AppLogger {
 		try {
 			const currentSlot = await this.connection.getSlot();
 			if (currentSlot <= releaseSlot) {
-				const msToRelease = (releaseSlot - currentSlot + 1) * 400; // Add one to land after the release slot
-				await new Promise((resolve) => setTimeout(resolve, msToRelease));
+				const msToRelease = (releaseSlot - currentSlot + 1) * 400;
+				const jitter = Math.random() * 10_000; // Prevent multiple instances from attempting simultaneously
+				await new Promise((resolve) =>
+					setTimeout(resolve, msToRelease + jitter),
+				);
 			}
 		} catch (error) {
 			this.logger.error(`Error waiting for release: ${error}`);
@@ -726,7 +733,6 @@ export class FillBot extends AppLogger {
 			}
 
 			transaction.sign(signers);
-
 			const signature = await retryWithBackoff(
 				async () => await this.connection.sendTransaction(transaction),
 				0,
