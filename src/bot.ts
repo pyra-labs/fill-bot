@@ -114,6 +114,9 @@ export class FillBot extends AppLogger {
 
 			for (const depositAddress of depositAddresses) {
 				for (const marketIndex of MarketIndex) {
+					const jitter = Math.random() * 1_000; // Prevent multiple instances from attempting simultaneously
+					await new Promise((resolve) => setTimeout(resolve, jitter));
+
 					const balance: BN = depositAddress.balances[marketIndex];
 					if (balance.lte(ZERO)) {
 						continue;
