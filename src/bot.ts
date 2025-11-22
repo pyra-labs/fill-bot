@@ -544,7 +544,7 @@ export class FillBot extends AppLogger {
 					logsString.includes(INSUFFICIENT_DEPOSIT_ERROR)
 				) {
 					this.logger.info(
-						`Insufficient collateral error for order ${orderPubkey.toBase58()}, skipping...: ${logsString}`,
+						`Insufficient collateral error for order ${orderPubkey.toBase58()}, skipping...`,
 					);
 					return;
 				}
