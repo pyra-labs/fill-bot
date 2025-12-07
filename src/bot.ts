@@ -490,8 +490,9 @@ export class FillBot extends AppLogger {
 				);
 				const minRent =
 					await this.connection.getMinimumBalanceForRentExemption(0);
+				const requiredBalance = Math.max(0, minRent - destinationBalance);
 
-				if (destinationBalance < minRent) return;
+				if (order.amountBaseUnits < requiredBalance) return;
 			}
 
 			const user = await quartzClient.getQuartzAccount(order.timeLock.owner);
