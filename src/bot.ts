@@ -490,9 +490,9 @@ export class FillBot extends AppLogger {
 				);
 				const minRent =
 					await this.connection.getMinimumBalanceForRentExemption(0);
-				const requiredBalance = Math.max(0, minRent - destinationBalance);
+				const extraRentRequired = Math.max(0, minRent - destinationBalance);
 
-				if (order.amountBaseUnits < requiredBalance) return;
+				if (order.amountBaseUnits < extraRentRequired) return;
 			}
 
 			const user = await quartzClient.getQuartzAccount(order.timeLock.owner);
@@ -727,10 +727,11 @@ export class FillBot extends AppLogger {
 				lookupTables,
 			);
 
-			const MAX_GAS_FEE = 0.001 * LAMPORTS_PER_SOL;
+			const MAX_GAS_FEE = 0.0025 * LAMPORTS_PER_SOL;
 			if (gasFee > MAX_GAS_FEE) {
+				const gasFeeSol = gasFee / LAMPORTS_PER_SOL;
 				this.logger.warn(
-					`Gas fee for order ${orderAccount?.toBase58()} is too high, skipping...`,
+					`Gas fee for order ${orderAccount?.toBase58() ?? ""} is too high (${gasFeeSol} SOL), skipping...`,
 				);
 				return null;
 			}
