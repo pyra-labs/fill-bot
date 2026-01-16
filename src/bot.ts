@@ -727,7 +727,7 @@ export class FillBot extends AppLogger {
 				lookupTables,
 			);
 
-			const MAX_GAS_FEE = 0.0025 * LAMPORTS_PER_SOL;
+			const MAX_GAS_FEE = 0.01 * LAMPORTS_PER_SOL;
 			if (gasFee > MAX_GAS_FEE) {
 				const gasFeeSol = gasFee / LAMPORTS_PER_SOL;
 				this.logger.warn(
