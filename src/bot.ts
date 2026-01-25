@@ -83,10 +83,10 @@ export class FillBot extends AppLogger {
 		this.logger.info(`Balance: ${balance / LAMPORTS_PER_SOL} SOL`);
 
 		this.checkOpenOrders(false);
-		setInterval(this.checkOpenOrders, 1000 * 60 * 2); // 2 minutes
+		setInterval(this.checkOpenOrders, 1000 * 150); // 2.5 minutes
 
 		this.processDepositAddresses();
-		setInterval(this.processDepositAddresses, 1000 * 60 * 1); // 1 minute
+		setInterval(this.processDepositAddresses, 1000 * 90); // 90 seconds
 	}
 
 	private processDepositAddresses = async (): Promise<void> => {
