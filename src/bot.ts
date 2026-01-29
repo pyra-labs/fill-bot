@@ -233,12 +233,27 @@ export class FillBot extends AppLogger {
 					"Program log: AnchorError occurred. Error Code: NoSpotPositionAvailable. Error Number: 6084. Error Message: NoSpotPositionAvailable.";
 				const INSUFFICIENT_DEPOSIT_ERROR =
 					"Program log: AnchorError occurred. Error Code: InsufficientDeposit. Error Number: 6002. Error Message: Insufficient deposit.";
+				const OLD_VAULT_ERROR =
+					"Program log: AnchorError caused by account: vault. Error Code: AccountDidNotDeserialize. Error Number: 3003. Error Message: Failed to deserialize the account.";
 
 				if (logsString.includes(SPOT_POSITION_UNAVAILABLE_ERROR)) {
+					this.logger.warn(
+						`Spot position unavailable error for user ${user.pubkey.toBase58()} (market index ${marketIndex}), skipping...`,
+					);
 					return;
 				}
 
 				if (logsString.includes(INSUFFICIENT_DEPOSIT_ERROR)) {
+					this.logger.warn(
+						`Insufficient deposit error for user ${user.pubkey.toBase58()} (market index ${marketIndex}), skipping...`,
+					);
+					return;
+				}
+
+				if (logsString.includes(OLD_VAULT_ERROR)) {
+					this.logger.warn(
+						`Old vault error for user ${user.pubkey.toBase58()}, could not deserialize in program. (market index ${marketIndex}), skipping...`,
+					);
 					return;
 				}
 			}
@@ -482,7 +497,12 @@ export class FillBot extends AppLogger {
 					TOKENS[marketIndex].mint,
 				);
 
-				if (!doesAtaExist) return;
+				if (!doesAtaExist) {
+					this.logger.warn(
+						`ATA for order ${orderPubkey.toBase58()}'s destination does not exist, skipping...`,
+					);
+					return;
+				}
 			}
 			if (marketIndex === MARKET_INDEX_SOL) {
 				const destinationBalance = await this.connection.getBalance(
@@ -492,7 +512,12 @@ export class FillBot extends AppLogger {
 					await this.connection.getMinimumBalanceForRentExemption(0);
 				const extraRentRequired = Math.max(0, minRent - destinationBalance);
 
-				if (order.amountBaseUnits < extraRentRequired) return;
+				if (order.amountBaseUnits < extraRentRequired) {
+					this.logger.warn(
+						`Order ${orderPubkey.toBase58()}'s amount is insufficient to cover the destination's rent, skipping...`,
+					);
+					return;
+				}
 			}
 
 			const user = await quartzClient.getQuartzAccount(order.timeLock.owner);
@@ -505,7 +530,10 @@ export class FillBot extends AppLogger {
 					[], // Ignore other open orders
 				));
 			if (maxWithdraw < order.amountBaseUnits * 0.85) {
-				return; // Skip withdraw orders with insufficient balance to be filled
+				this.logger.warn(
+					`Order ${orderPubkey.toBase58()}'s amount is too far above the owner's max withdraw limit, skipping...`,
+				);
+				return;
 			}
 			const amountToWithdraw = Math.min(maxWithdraw, order.amountBaseUnits);
 			const ixData = await user.makeFulfilWithdrawIxs(
@@ -558,7 +586,9 @@ export class FillBot extends AppLogger {
 				}
 
 				if (logsString.includes(ACCOUNT_DOES_NOT_EXIST_ERROR)) {
-					// Order already processed
+					this.logger.warn(
+						`Order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`,
+					);
 					return;
 				}
 
@@ -571,7 +601,9 @@ export class FillBot extends AppLogger {
 				error instanceof Error &&
 				error.message.includes(ACCOUNT_DOES_NOT_EXIST_ERROR)
 			) {
-				// Order already processed
+				this.logger.warn(
+					`Order ${orderPubkey.toBase58()} no longer exists on chain, skipping...`,
+				);
 				return;
 			}
 
