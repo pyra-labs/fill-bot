@@ -214,7 +214,7 @@ export class FillBot extends AppLogger {
 		marketIndex: MarketIndex,
 	): Promise<void> => {
 		try {
-			const { ixs, lookupTables, signers } = await user.makeDepositIxs(
+			const { ixs, lookupTables, signers } = await user.makeDepositFromPdaIxs(
 				marketIndex,
 				this.wallet.publicKey,
 			);
