@@ -5,6 +5,10 @@ export interface VaultResponse {
 		lamports: number;
 		splAccounts: DepositAddressSplAccount[];
 	};
+	privyWallet?: {
+		lamports: number;
+		splAccounts: DepositAddressSplAccount[];
+	};
 }
 
 export interface VaultData {

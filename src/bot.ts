@@ -25,7 +25,7 @@ import {
 	SendTransactionError,
 } from "@solana/web3.js";
 import config from "./config/config.js";
-import { MIN_LAMPORTS_BALANCE } from "./config/constants.js";
+import { LAMPORTS_RENT, MIN_LAMPORTS_BALANCE } from "./config/constants.js";
 import type { AddressLookupTableAccount } from "@solana/web3.js";
 import {
 	buildEndpointURL,
@@ -97,7 +97,8 @@ export class FillBot extends AppLogger {
 
 			let depositAddresses: {
 				owner: PublicKey;
-				balances: Record<MarketIndex, BN>;
+				pdaBalances: Record<MarketIndex, BN>;
+				privyWalletBalances: Record<MarketIndex, BN>;
 			}[] = [];
 			try {
 				depositAddresses = await this.getAllDepositAddressesAPI();
@@ -113,11 +114,34 @@ export class FillBot extends AppLogger {
 			);
 
 			for (const depositAddress of depositAddresses) {
+				// Sweep Privy wallet balances to PDA first
 				for (const marketIndex of MarketIndex) {
-					const balance: BN = depositAddress.balances[marketIndex];
-					if (balance.lte(ZERO)) {
-						continue;
+					const privyBalance: BN = depositAddress.privyWalletBalances[marketIndex];
+					if (privyBalance.lte(ZERO)) continue;
+
+					const swept = await this.sweepPrivyWalletToPda(
+						depositAddress.owner,
+						marketIndex,
+						privyBalance,
+					);
+					if (swept) {
+						try {
+							const user = await quartzClient.getQuartzAccount(
+								depositAddress.owner,
+							);
+							await this.fulfilDeposit(user, marketIndex);
+						} catch (error) {
+							this.logger.warn(
+								`Error depositing swept funds for ${depositAddress.owner.toBase58()} (market ${marketIndex}), will retry next cycle: ${error}`,
+							);
+						}
 					}
+				}
+
+				// Process existing PDA balances (standard flow)
+				for (const marketIndex of MarketIndex) {
+					const balance: BN = depositAddress.pdaBalances[marketIndex];
+					if (balance.lte(ZERO)) continue;
 
 					const user = await quartzClient.getQuartzAccount(
 						depositAddress.owner,
@@ -135,7 +159,8 @@ export class FillBot extends AppLogger {
 	private getAllDepositAddressesAPI = async (): Promise<
 		{
 			owner: PublicKey;
-			balances: Record<MarketIndex, BN>;
+			pdaBalances: Record<MarketIndex, BN>;
+			privyWalletBalances: Record<MarketIndex, BN>;
 		}[]
 	> => {
 		const response = await fetchAndParse<{
@@ -144,33 +169,21 @@ export class FillBot extends AppLogger {
 
 		const depositAddresses: {
 			owner: PublicKey;
-			balances: Record<MarketIndex, BN>;
+			pdaBalances: Record<MarketIndex, BN>;
+			privyWalletBalances: Record<MarketIndex, BN>;
 		}[] = [];
 
 		for (const user of response.users) {
 			const owner = new PublicKey(user.vaultAccount.owner);
-			const balances = getMarketIndicesRecord(ZERO);
-
-			const LAMPORTS_RENT = 890880;
-			balances[MARKET_INDEX_SOL] = new BN(
-				Math.max(0, user.depositAddress.lamports - LAMPORTS_RENT),
-			);
-
-			for (const splAccount of user.depositAddress.splAccounts) {
-				const mint = new PublicKey(splAccount.mint);
-				const token = Object.entries(TOKENS).find((value) =>
-					value[1].mint.equals(mint),
-				);
-
-				if (!token || !isMarketIndex(Number(token[0]))) continue;
-				const marketIndex = Number(token[0]) as MarketIndex;
-
-				balances[marketIndex] = new BN(splAccount.amount);
-			}
+			const pdaBalances = this.parseAddressBalances(user.depositAddress);
+			const privyWalletBalances = user.privyWallet
+				? this.parseAddressBalances(user.privyWallet)
+				: getMarketIndicesRecord(ZERO);
 
 			depositAddresses.push({
 				owner,
-				balances,
+				pdaBalances,
+				privyWalletBalances,
 			});
 		}
 
@@ -180,7 +193,8 @@ export class FillBot extends AppLogger {
 	private getAllDepositAddressesRPC = async (): Promise<
 		{
 			owner: PublicKey;
-			balances: Record<MarketIndex, BN>;
+			pdaBalances: Record<MarketIndex, BN>;
+			privyWalletBalances: Record<MarketIndex, BN>;
 		}[]
 	> => {
 		const quartzClient = await this.quartzClientPromise;
@@ -193,15 +207,17 @@ export class FillBot extends AppLogger {
 
 		const depositAddresses: {
 			owner: PublicKey;
-			balances: Record<MarketIndex, number>;
+			pdaBalances: Record<MarketIndex, number>;
+			privyWalletBalances: Record<MarketIndex, BN>;
 		}[] = [];
 
 		for (const user of users) {
 			if (!user) continue;
-			const balances = await user.getAllDepositAddressBalances();
+			const pdaBalances = await user.getAllDepositAddressBalances();
 			depositAddresses.push({
 				owner: user.pubkey,
-				balances,
+				pdaBalances,
+				privyWalletBalances: getMarketIndicesRecord(ZERO),
 			});
 		}
 
@@ -261,6 +277,68 @@ export class FillBot extends AppLogger {
 			this.logger.error(
 				`Error fulfilling deposit for user ${user.pubkey.toBase58()} (market index ${marketIndex}): ${error} - ${JSON.stringify(error)}`,
 			);
+		}
+	};
+
+	private parseAddressBalances = (
+		addressData: { lamports: number; splAccounts: { mint: string; amount: number }[] },
+	): Record<MarketIndex, BN> => {
+		const balances = getMarketIndicesRecord(ZERO);
+
+		balances[MARKET_INDEX_SOL] = new BN(
+			Math.max(0, addressData.lamports - LAMPORTS_RENT),
+		);
+
+		for (const splAccount of addressData.splAccounts) {
+			const mint = new PublicKey(splAccount.mint);
+			const token = Object.entries(TOKENS).find((value) =>
+				value[1].mint.equals(mint),
+			);
+
+			if (!token || !isMarketIndex(Number(token[0]))) continue;
+			const marketIndex = Number(token[0]) as MarketIndex;
+
+			balances[marketIndex] = new BN(splAccount.amount);
+		}
+
+		return balances;
+	};
+
+	private sweepPrivyWalletToPda = async (
+		owner: PublicKey,
+		marketIndex: MarketIndex,
+		amount: BN,
+	): Promise<boolean> => {
+		try {
+			const response = await fetchAndParse<{ success: boolean; signature?: string }>(
+				`${config.API_V2_URL}/sweep/privy-to-pda`,
+				{
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						ownerAddress: owner.toBase58(),
+						marketIndex,
+						amount: amount.toString(),
+					}),
+				},
+			);
+
+			if (response.success) {
+				this.logger.info(
+					`Swept Privy wallet for ${owner.toBase58()} (market ${marketIndex}): ${response.signature}`,
+				);
+				return true;
+			}
+
+			this.logger.warn(
+				`Sweep failed for ${owner.toBase58()} (market ${marketIndex}): ${JSON.stringify(response)}`,
+			);
+			return false;
+		} catch (error) {
+			this.logger.warn(
+				`Error sweeping Privy wallet for ${owner.toBase58()} (market ${marketIndex}): ${error}`,
+			);
+			return false;
 		}
 	};
 
