@@ -1,3 +1,12 @@
+import type { BN, MarketIndex } from "@quartz-labs/sdk";
+import type { PublicKey } from "@solana/web3.js";
+
+export interface DepositAddressInfo {
+	owner: PublicKey;
+	pdaBalances: Record<MarketIndex, BN>;
+	privyWalletBalances: Record<MarketIndex, BN>;
+}
+
 export interface VaultResponse {
 	vaultAddress: string;
 	vaultAccount: VaultData;

@@ -39,7 +39,7 @@ import type {
 	SpendLimitsOrderResponse,
 	WithdrawOrderResponse,
 } from "./types/Orders.interface.js";
-import type { VaultResponse } from "./types/Vault.interface.js";
+import type { DepositAddressInfo, VaultResponse } from "./types/Vault.interface.js";
 
 export class FillBot extends AppLogger {
 	private connection: AdvancedConnection;
@@ -95,11 +95,7 @@ export class FillBot extends AppLogger {
 
 			this.logger.info("Processing deposit addresses");
 
-			let depositAddresses: {
-				owner: PublicKey;
-				pdaBalances: Record<MarketIndex, BN>;
-				privyWalletBalances: Record<MarketIndex, BN>;
-			}[] = [];
+			let depositAddresses: DepositAddressInfo[] = [];
 			try {
 				depositAddresses = await this.getAllDepositAddressesAPI();
 			} catch (error) {
@@ -114,6 +110,12 @@ export class FillBot extends AppLogger {
 			);
 
 			for (const depositAddress of depositAddresses) {
+				let user: QuartzUser | null = null;
+				const getUser = async () => {
+					if (!user) user = await quartzClient.getQuartzAccount(depositAddress.owner);
+					return user;
+				};
+
 				// Sweep Privy wallet balances to PDA first
 				for (const marketIndex of MarketIndex) {
 					const privyBalance: BN = depositAddress.privyWalletBalances[marketIndex];
@@ -126,10 +128,7 @@ export class FillBot extends AppLogger {
 					);
 					if (swept) {
 						try {
-							const user = await quartzClient.getQuartzAccount(
-								depositAddress.owner,
-							);
-							await this.fulfilDeposit(user, marketIndex);
+							await this.fulfilDeposit(await getUser(), marketIndex);
 						} catch (error) {
 							this.logger.warn(
 								`Error depositing swept funds for ${depositAddress.owner.toBase58()} (market ${marketIndex}), will retry next cycle: ${error}`,
@@ -143,10 +142,7 @@ export class FillBot extends AppLogger {
 					const balance: BN = depositAddress.pdaBalances[marketIndex];
 					if (balance.lte(ZERO)) continue;
 
-					const user = await quartzClient.getQuartzAccount(
-						depositAddress.owner,
-					);
-					this.fulfilDeposit(user, marketIndex);
+					this.fulfilDeposit(await getUser(), marketIndex);
 				}
 			}
 		} catch (error) {
@@ -156,22 +152,12 @@ export class FillBot extends AppLogger {
 		}
 	};
 
-	private getAllDepositAddressesAPI = async (): Promise<
-		{
-			owner: PublicKey;
-			pdaBalances: Record<MarketIndex, BN>;
-			privyWalletBalances: Record<MarketIndex, BN>;
-		}[]
-	> => {
+	private getAllDepositAddressesAPI = async (): Promise<DepositAddressInfo[]> => {
 		const response = await fetchAndParse<{
 			users: VaultResponse[];
 		}>(`${config.INTERNAL_API_URL}/data/all-users`);
 
-		const depositAddresses: {
-			owner: PublicKey;
-			pdaBalances: Record<MarketIndex, BN>;
-			privyWalletBalances: Record<MarketIndex, BN>;
-		}[] = [];
+		const depositAddresses: DepositAddressInfo[] = [];
 
 		for (const user of response.users) {
 			const owner = new PublicKey(user.vaultAccount.owner);
@@ -190,13 +176,7 @@ export class FillBot extends AppLogger {
 		return depositAddresses;
 	};
 
-	private getAllDepositAddressesRPC = async (): Promise<
-		{
-			owner: PublicKey;
-			pdaBalances: Record<MarketIndex, BN>;
-			privyWalletBalances: Record<MarketIndex, BN>;
-		}[]
-	> => {
+	private getAllDepositAddressesRPC = async (): Promise<DepositAddressInfo[]> => {
 		const quartzClient = await this.quartzClientPromise;
 		const owners = await retryWithBackoff(
 			async () => await quartzClient.getAllQuartzAccountOwnerPubkeys(),
@@ -205,11 +185,7 @@ export class FillBot extends AppLogger {
 			return await quartzClient.getMultipleQuartzAccounts(owners);
 		});
 
-		const depositAddresses: {
-			owner: PublicKey;
-			pdaBalances: Record<MarketIndex, number>;
-			privyWalletBalances: Record<MarketIndex, BN>;
-		}[] = [];
+		const depositAddresses: DepositAddressInfo[] = [];
 
 		for (const user of users) {
 			if (!user) continue;
@@ -281,7 +257,7 @@ export class FillBot extends AppLogger {
 	};
 
 	private parseAddressBalances = (
-		addressData: { lamports: number; splAccounts: { mint: string; amount: number }[] },
+		addressData: VaultResponse["depositAddress"],
 	): Record<MarketIndex, BN> => {
 		const balances = getMarketIndicesRecord(ZERO);
 
@@ -314,7 +290,10 @@ export class FillBot extends AppLogger {
 				`${config.API_V2_URL}/sweep/privy-to-pda`,
 				{
 					method: "POST",
-					headers: { "Content-Type": "application/json" },
+					headers: {
+						"Content-Type": "application/json",
+						"Authorization": `Bearer ${config.API_V2_KEY}`,
+					},
 					body: JSON.stringify({
 						ownerAddress: owner.toBase58(),
 						marketIndex,
