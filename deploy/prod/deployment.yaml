@@ -40,6 +40,13 @@ spec:
                   key: key
             - name: INTERNAL_API_URL
               value: https://api.pyra.fi/card/
+            - name: API_V2_URL
+              value: https://api.pyra.fi/hook/
+            - name: API_V2_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: api-privy-sweep-key
+                  key: key
             - name: EMAIL_TO
               value: iarla@pyra.fi,diego@pyra.fi
             - name: EMAIL_FROM
