@@ -7,36 +7,36 @@ export interface DepositAddressInfo {
 	privyWalletBalances: Record<MarketIndex, BN>;
 }
 
+export interface WalletBalances {
+	address: string;
+	lamports: number;
+	splAccounts: SplAccount[];
+}
+
 export interface VaultResponse {
 	vaultAddress: string;
 	vaultAccount: VaultData;
-	depositAddress: {
-		lamports: number;
-		splAccounts: DepositAddressSplAccount[];
-	};
-	privyWallet?: {
-		lamports: number;
-		splAccounts: DepositAddressSplAccount[];
-	};
+	depositAddress: WalletBalances;
+	privyWallet?: WalletBalances;
 }
 
 export interface VaultData {
 	owner: string;
 	bump: number;
-	spend_limit_per_transaction: number;
-	spend_limit_per_timeframe: number;
-	remaining_spend_limit_per_timeframe: number;
-	next_timeframe_reset_timestamp: number;
-	timeframe_in_seconds: number;
+	spendLimitPerTransaction: number;
+	spendLimitPerTimeframe: number;
+	remainingSpendLimitPerTimeframe: number;
+	nextTimeframeResetTimestamp: number;
+	timeframeInSeconds: number;
 }
 
-export interface DepositAddressSplAccount {
+export interface SplAccount {
 	mint: string;
 	owner: string;
 	amount: number;
 	delegate: string | null;
 	state: number;
-	is_native: number | null;
-	delegated_amount: number;
-	close_authority: string | null;
+	isNative: number | null;
+	delegatedAmount: number;
+	closeAuthority: string | null;
 }

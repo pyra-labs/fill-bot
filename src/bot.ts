@@ -39,7 +39,7 @@ import type {
 	SpendLimitsOrderResponse,
 	WithdrawOrderResponse,
 } from "./types/Orders.interface.js";
-import type { DepositAddressInfo, VaultResponse } from "./types/Vault.interface.js";
+import type { DepositAddressInfo, VaultResponse, WalletBalances } from "./types/Vault.interface.js";
 
 export class FillBot extends AppLogger {
 	private connection: AdvancedConnection;
@@ -124,7 +124,6 @@ export class FillBot extends AppLogger {
 					const swept = await this.sweepPrivyWalletToPda(
 						depositAddress.owner,
 						marketIndex,
-						privyBalance,
 					);
 					if (swept) {
 						try {
@@ -155,7 +154,7 @@ export class FillBot extends AppLogger {
 	private getAllDepositAddressesAPI = async (): Promise<DepositAddressInfo[]> => {
 		const response = await fetchAndParse<{
 			users: VaultResponse[];
-		}>(`${config.INTERNAL_API_URL}/data/all-users`);
+		}>(`${config.API_V2_URL}/data/all-users`);
 
 		const depositAddresses: DepositAddressInfo[] = [];
 
@@ -257,7 +256,7 @@ export class FillBot extends AppLogger {
 	};
 
 	private parseAddressBalances = (
-		addressData: VaultResponse["depositAddress"],
+		addressData: WalletBalances,
 	): Record<MarketIndex, BN> => {
 		const balances = getMarketIndicesRecord(ZERO);
 
@@ -283,10 +282,9 @@ export class FillBot extends AppLogger {
 	private sweepPrivyWalletToPda = async (
 		owner: PublicKey,
 		marketIndex: MarketIndex,
-		amount: BN,
 	): Promise<boolean> => {
 		try {
-			const response = await fetchAndParse<{ success: boolean; signature?: string }>(
+			const response = await fetchAndParse<{ success: boolean; amount?: number; signature?: string }>(
 				`${config.API_V2_URL}/sweep/privy-to-pda`,
 				{
 					method: "POST",
@@ -297,14 +295,13 @@ export class FillBot extends AppLogger {
 					body: JSON.stringify({
 						ownerAddress: owner.toBase58(),
 						marketIndex,
-						amount: amount.toString(),
 					}),
 				},
 			);
 
 			if (response.success) {
 				this.logger.info(
-					`Swept Privy wallet for ${owner.toBase58()} (market ${marketIndex}): ${response.signature}`,
+					`Swept ${response.amount} from Privy wallet for ${owner.toBase58()} (market ${marketIndex}): ${response.signature}`,
 				);
 				return true;
 			}
