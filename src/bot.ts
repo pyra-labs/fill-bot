@@ -306,12 +306,12 @@ export class FillBot extends AppLogger {
 				return true;
 			}
 
-			this.logger.warn(
+			this.logger.error(
 				`Sweep failed for ${owner.toBase58()} (market ${marketIndex}): ${JSON.stringify(response)}`,
 			);
 			return false;
 		} catch (error) {
-			this.logger.warn(
+			this.logger.error(
 				`Error sweeping Privy wallet for ${owner.toBase58()} (market ${marketIndex}): ${error}`,
 			);
 			return false;
