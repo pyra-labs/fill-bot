@@ -94,21 +94,26 @@ export class FillBot extends AppLogger {
 		try {
 			const quartzClient = await this.quartzClientPromise;
 
-			this.logger.info("Processing deposit addresses");
+			this.logger.info("[Privy Sweep] Starting deposit address sweep");
 
 			let depositAddresses: DepositAddressInfo[] = [];
 			try {
 				depositAddresses = await this.getAllDepositAddressesAPI();
+				this.logger.info(
+					`[Privy Sweep] Fetched ${depositAddresses.length} deposit addresses via API`,
+				);
 			} catch (error) {
 				this.logger.warn(
-					`Deposit addresses API failed, falling back to RPC: ${error} - ${JSON.stringify(error)}`,
+					`[Privy Sweep] API failed, falling back to RPC: ${error} - ${JSON.stringify(error)}`,
 				);
 				depositAddresses = await this.getAllDepositAddressesRPC();
+				this.logger.info(
+					`[Privy Sweep] Fetched ${depositAddresses.length} deposit addresses via RPC`,
+				);
 			}
 
-			this.logger.info(
-				`Processing deposit addresses for ${depositAddresses.length} users`,
-			);
+			let privySweepCount = 0;
+			let pdaDepositCount = 0;
 
 			for (const depositAddress of depositAddresses) {
 				let user: QuartzUser | null = null;
@@ -122,6 +127,11 @@ export class FillBot extends AppLogger {
 					const privyBalance: BN = depositAddress.privyWalletBalances[marketIndex];
 					if (privyBalance.lte(ZERO)) continue;
 
+					privySweepCount++;
+					this.logger.info(
+						`[Privy Sweep] Found Privy wallet balance for ${depositAddress.owner.toBase58()} (market ${marketIndex}): ${privyBalance.toString()} base units`,
+					);
+
 					const swept = await this.sweepPrivyWalletToPda(
 						depositAddress.owner,
 						marketIndex,
@@ -131,7 +141,7 @@ export class FillBot extends AppLogger {
 							await this.fulfilDeposit(await getUser(), marketIndex);
 						} catch (error) {
 							this.logger.warn(
-								`Error depositing swept funds for ${depositAddress.owner.toBase58()} (market ${marketIndex}), will retry next cycle: ${error}`,
+								`[Privy Sweep] Error depositing swept funds for ${depositAddress.owner.toBase58()} (market ${marketIndex}), will retry next cycle: ${error}`,
 							);
 						}
 					}
@@ -142,12 +152,21 @@ export class FillBot extends AppLogger {
 					const balance: BN = depositAddress.pdaBalances[marketIndex];
 					if (balance.lte(ZERO)) continue;
 
+					pdaDepositCount++;
+					this.logger.info(
+						`[Privy Sweep] Found PDA balance for ${depositAddress.owner.toBase58()} (market ${marketIndex}): ${balance.toString()} base units`,
+					);
+
 					this.fulfilDeposit(await getUser(), marketIndex);
 				}
 			}
+
+			this.logger.info(
+				`[Privy Sweep] Complete — ${privySweepCount} privy sweeps, ${pdaDepositCount} PDA deposits queued`,
+			);
 		} catch (error) {
 			this.logger.error(
-				`Error processing deposit addresses: ${error} - ${JSON.stringify(error)}`,
+				`[Privy Sweep] Error processing deposit addresses: ${error} - ${JSON.stringify(error)}`,
 			);
 		}
 	};
@@ -204,6 +223,11 @@ export class FillBot extends AppLogger {
 		user: QuartzUser,
 		marketIndex: MarketIndex,
 	): Promise<void> => {
+		const userKey = user.pubkey.toBase58();
+		this.logger.info(
+			`[Privy Sweep] Attempting deposit fulfilment for ${userKey} (market ${marketIndex})`,
+		);
+
 		try {
 			const { ixs, lookupTables, signers } = await user.makeDepositIxs(
 				marketIndex,
@@ -214,9 +238,15 @@ export class FillBot extends AppLogger {
 				...signers,
 			]);
 
-			this.logger.info(
-				`Deposit filled for user ${user.pubkey.toBase58()} (market index ${marketIndex}) confirmed: ${signature}`,
-			);
+			if (signature) {
+				this.logger.info(
+					`[Privy Sweep] Deposit filled for ${userKey} (market ${marketIndex}): ${signature}`,
+				);
+			} else {
+				this.logger.warn(
+					`[Privy Sweep] Deposit for ${userKey} (market ${marketIndex}) returned no signature (skipped by simulation or gas check)`,
+				);
+			}
 		} catch (error) {
 			if (error instanceof SendTransactionError) {
 				const logs = await error.getLogs(this.connection).catch(() => [error]);
@@ -230,28 +260,28 @@ export class FillBot extends AppLogger {
 
 				if (logsString.includes(SPOT_POSITION_UNAVAILABLE_ERROR)) {
 					this.logger.warn(
-						`Spot position unavailable error for user ${user.pubkey.toBase58()} (market index ${marketIndex}), skipping...`,
+						`[Privy Sweep] Failed for ${userKey} (market ${marketIndex}): no spot position available, skipping`,
 					);
 					return;
 				}
 
 				if (logsString.includes(INSUFFICIENT_DEPOSIT_ERROR)) {
 					this.logger.warn(
-						`Insufficient deposit error for user ${user.pubkey.toBase58()} (market index ${marketIndex}), skipping...`,
+						`[Privy Sweep] Failed for ${userKey} (market ${marketIndex}): insufficient deposit, skipping`,
 					);
 					return;
 				}
 
 				if (logsString.includes(OLD_VAULT_ERROR)) {
 					this.logger.warn(
-						`Old vault error for user ${user.pubkey.toBase58()}, could not deserialize in program. (market index ${marketIndex}), skipping...`,
+						`[Privy Sweep] Failed for ${userKey} (market ${marketIndex}): old vault (could not deserialize), skipping`,
 					);
 					return;
 				}
 			}
 
 			this.logger.error(
-				`Error fulfilling deposit for user ${user.pubkey.toBase58()} (market index ${marketIndex}): ${error} - ${JSON.stringify(error)}`,
+				`[Privy Sweep] Error fulfilling deposit for ${userKey} (market ${marketIndex}): ${error} - ${JSON.stringify(error)}`,
 			);
 		}
 	};
@@ -284,6 +314,11 @@ export class FillBot extends AppLogger {
 		owner: PublicKey,
 		marketIndex: MarketIndex,
 	): Promise<boolean> => {
+		const ownerKey = owner.toBase58();
+		this.logger.info(
+			`[Privy Sweep] Attempting Privy-to-PDA sweep for ${ownerKey} (market ${marketIndex})`,
+		);
+
 		try {
 			const response = await fetchAndParse<{ success: boolean; amount?: number; signature?: string }>(
 				`${config.API_V2_URL}/sweep/privy-to-pda`,
@@ -294,7 +329,7 @@ export class FillBot extends AppLogger {
 						"Authorization": `Bearer ${config.API_V2_KEY}`,
 					},
 					body: JSON.stringify({
-						ownerAddress: owner.toBase58(),
+						ownerAddress: ownerKey,
 						marketIndex,
 					}),
 				},
@@ -302,18 +337,18 @@ export class FillBot extends AppLogger {
 
 			if (response.success) {
 				this.logger.info(
-					`Swept ${response.amount} from Privy wallet for ${owner.toBase58()} (market ${marketIndex}): ${response.signature}`,
+					`[Privy Sweep] Swept ${response.amount} from Privy wallet for ${ownerKey} (market ${marketIndex}): ${response.signature}`,
 				);
 				return true;
 			}
 
 			this.logger.error(
-				`Sweep failed for ${owner.toBase58()} (market ${marketIndex}): ${JSON.stringify(response)}`,
+				`[Privy Sweep] Sweep API returned failure for ${ownerKey} (market ${marketIndex}): ${JSON.stringify(response)}`,
 			);
 			return false;
 		} catch (error) {
 			this.logger.error(
-				`Error sweeping Privy wallet for ${owner.toBase58()} (market ${marketIndex}): ${error}`,
+				`[Privy Sweep] Error calling sweep API for ${ownerKey} (market ${marketIndex}): ${error}`,
 			);
 			return false;
 		}
