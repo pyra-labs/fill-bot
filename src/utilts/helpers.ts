@@ -101,6 +101,11 @@ export async function getComputerUnitLimitIxMinCu(
 	};
 }
 
+export interface SimulationResult {
+	simulationError: string | null;
+	simulationLogs: string[] | null;
+}
+
 export async function buildTransactionMinCU(
 	connection: Connection,
 	instructions: TransactionInstruction[],
@@ -109,6 +114,7 @@ export async function buildTransactionMinCU(
 ): Promise<{
 	transaction: VersionedTransaction;
 	gasFee: number;
+	simulation: SimulationResult;
 }> {
 	const blockhash = (await connection.getLatestBlockhash()).blockhash;
 	const { ix: ix_computeLimit, limit: computeUnitLimit } =
@@ -135,9 +141,20 @@ export async function buildTransactionMinCU(
 		instructions: [ix_computeLimit, ix_computePrice, ...instructions],
 	}).compileToV0Message(lookupTables);
 	const transaction = new VersionedTransaction(messageV0);
+
+	// Simulate the final transaction to check for errors before sending
+	const simulation = await connection.simulateTransaction(transaction);
+	const simulationResult: SimulationResult = {
+		simulationError: simulation.value.err
+			? JSON.stringify(simulation.value.err)
+			: null,
+		simulationLogs: simulation.value.logs,
+	};
+
 	return {
 		transaction,
 		gasFee: gasFeeLamports,
+		simulation: simulationResult,
 	};
 }
 
