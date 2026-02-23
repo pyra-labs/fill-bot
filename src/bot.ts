@@ -33,6 +33,7 @@ import {
 	fetchAndParse,
 	filterOrdersForMissed,
 	hasAta,
+	type SimulationResult,
 } from "./utilts/helpers.js";
 import AdvancedConnection from "@quartz-labs/connection";
 import type {
@@ -735,6 +736,31 @@ export class FillBot extends AppLogger {
 		return orderResponse.order !== null;
 	};
 
+	// Expected simulation errors that should result in skipping rather than throwing
+	private static readonly EXPECTED_SIMULATION_ERRORS = [
+		"InsufficientFunds",
+		"InsufficientDeposit",
+		"InsufficientCollateral",
+		"NoSpotPositionAvailable",
+		"AccountDidNotDeserialize",
+		"DailyWithdrawLimit",
+		"custom program error: 0x1", // Insufficient funds (token program)
+	];
+
+	private getExpectedSimulationError(simulation: SimulationResult): string | null {
+		if (!simulation.simulationError && !simulation.simulationLogs) {
+			return null;
+		}
+
+		const logsString = simulation.simulationLogs?.join("\n") ?? "";
+		const errorString = simulation.simulationError ?? "";
+		const combined = `${logsString}\n${errorString}`;
+
+		return FillBot.EXPECTED_SIMULATION_ERRORS.find((expectedError) =>
+			combined.includes(expectedError),
+		) ?? null;
+	}
+
 	private buildSendAndConfirm = async (
 		instructions: TransactionInstruction[],
 		lookupTables: AddressLookupTableAccount[],
@@ -752,12 +778,33 @@ export class FillBot extends AppLogger {
 				}
 			}
 
-			const { transaction, gasFee } = await buildTransactionMinCU(
+			const { transaction, gasFee, simulation } = await buildTransactionMinCU(
 				this.connection,
 				instructions,
 				this.wallet.publicKey,
 				lookupTables,
 			);
+
+			// Check for simulation errors before sending
+			if (simulation.simulationError) {
+				const logsString = simulation.simulationLogs?.join("\n") ?? "";
+
+				const expectedError = this.getExpectedSimulationError(simulation);
+				if (expectedError) {
+					this.logger.warn(
+						`Simulation failed with expected error (${expectedError}), skipping`,
+					);
+					return null;
+				}
+
+				// Unexpected simulation error - throw to prevent sending to mainnet
+				this.logger.error(
+					`Simulation failed with unexpected error: ${simulation.simulationError}\nLogs: ${logsString}`,
+				);
+				throw new Error(
+					`Simulation failed: ${simulation.simulationError}\n${logsString}`,
+				);
+			}
 
 			const MAX_GAS_FEE = 0.01 * LAMPORTS_PER_SOL;
 			if (gasFee > MAX_GAS_FEE) {
