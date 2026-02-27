@@ -25,7 +25,7 @@
   "dependencies": {
     "@quartz-labs/connection": "2.0.1",
     "@quartz-labs/logger": "^1.1.1",
-    "@quartz-labs/sdk": "0.41.1",
+    "@quartz-labs/sdk": "0.42.0",
     "@solana/spl-token": "0.3.11",
     "@solana/web3.js": "1.95.8",
     "@types/node": "22.10.0",
